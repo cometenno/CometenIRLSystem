@@ -162,7 +162,7 @@ class AudioKeepalive:
             self.next_start_at = now + 30.0
             return
 
-        if not self.input_path.is_file():
+        if not self.input_path.exists():
             LOG.warning("Audio keepalive input was not found: %s", self.input_path)
             self.next_start_at = now + 30.0
             return
