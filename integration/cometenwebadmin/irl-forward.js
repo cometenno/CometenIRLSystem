@@ -26,6 +26,18 @@
     youtubesub: "youtubesub"
   };
 
+  const SETTINGS_KEY_MAP = {
+    follow: "follow",
+    sub: "sub",
+    resub: "resub",
+    gifted: "gifted",
+    giftbomb: "giftbomb",
+    bits: "bits",
+    donation: "charity",
+    raid: "raid",
+    youtubesub: "yt_sub"
+  };
+
   const SOUND_MAP = {
     follow: "follow.wav",
     sub: "sub.wav",
@@ -50,6 +62,31 @@
       .replace(/_alert$/, "");
 
     return TYPE_MAP[key] || "";
+  }
+
+  function currentIrlSettings() {
+    try {
+      if (typeof adminSettings !== "undefined" && adminSettings && typeof adminSettings === "object") {
+        return adminSettings.irl || null;
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  function irlAlertIsEnabled(eventType) {
+    const settings = currentIrlSettings();
+
+    // Older saved settings did not have an IRL section. Keep the original ON behavior.
+    if (!settings) return true;
+    if (settings.enabled === false) return false;
+
+    const typeSettings = settings.alerts && typeof settings.alerts === "object"
+      ? settings.alerts
+      : {};
+    const settingsKey = SETTINGS_KEY_MAP[eventType] || eventType;
+
+    return typeSettings[settingsKey] !== false;
   }
 
   function scheduleReconnect() {
@@ -80,7 +117,7 @@
     if (!payload || typeof payload !== "object") return;
 
     const eventType = cleanType(payload.alert || payload.alertType || payload.type);
-    if (!eventType) return;
+    if (!eventType || !irlAlertIsEnabled(eventType)) return;
 
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       connect();
