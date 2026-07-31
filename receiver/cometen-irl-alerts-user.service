@@ -1,0 +1,15 @@
+[Unit]
+Description=Cometen IRL Alert Receiver
+Wants=network-online.target
+After=network-online.target pipewire.service wireplumber.service
+
+[Service]
+Type=simple
+WorkingDirectory=@RECEIVER_DIR@
+ExecStart=/usr/bin/python3 @RECEIVER_DIR@/receiver.py @RECEIVER_DIR@/config.json
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
