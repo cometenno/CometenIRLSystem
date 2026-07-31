@@ -93,18 +93,54 @@ class AudioKeepalive:
             [
                 "pw-cat",
                 "--playback",
-                "--raw",
                 "--rate=48000",
                 "--channels=2",
                 "--format=s16",
-                "/dev/zero",
+                "-",
             ],
         )
+        self.input_path = Path(str(config.get("audio_keepalive_input", "/dev/zero")))
         self.restart_seconds = max(
             2.0, float(config.get("audio_keepalive_restart_seconds", 5))
         )
         self.process: subprocess.Popen[bytes] | None = None
+        self.input_handle: Any = None
         self.next_start_at = 0.0
+
+    def _close_input(self) -> None:
+        if self.input_handle is None:
+            return
+
+        try:
+            self.input_handle.close()
+        except Exception:
+            pass
+        finally:
+            self.input_handle = None
+
+    def _log_previous_exit(self) -> None:
+        if self.process is None:
+            return
+
+        exit_code = self.process.poll()
+        details = ""
+        if self.process.stderr is not None:
+            try:
+                details = self.process.stderr.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                details = ""
+
+        if details:
+            LOG.warning(
+                "Audio keepalive stopped with exit code %s: %s",
+                exit_code,
+                details,
+            )
+        else:
+            LOG.warning("Audio keepalive stopped with exit code %s", exit_code)
+
+        self.process = None
+        self._close_input()
 
     def ensure_running(self) -> None:
         if not self.enabled:
@@ -118,8 +154,7 @@ class AudioKeepalive:
             return
 
         if self.process is not None:
-            LOG.warning("Audio keepalive stopped with exit code %s", self.process.poll())
-            self.process = None
+            self._log_previous_exit()
 
         executable = shutil.which(self.command[0])
         if executable is None:
@@ -127,36 +162,42 @@ class AudioKeepalive:
             self.next_start_at = now + 30.0
             return
 
+        if not self.input_path.is_file():
+            LOG.warning("Audio keepalive input was not found: %s", self.input_path)
+            self.next_start_at = now + 30.0
+            return
+
         command = [executable, *self.command[1:]]
 
         try:
+            self.input_handle = self.input_path.open("rb", buffering=0)
             self.process = subprocess.Popen(
                 command,
-                stdin=subprocess.DEVNULL,
+                stdin=self.input_handle,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
             self.next_start_at = now + self.restart_seconds
             LOG.info("Audio keepalive started through PipeWire")
         except Exception:
             LOG.exception("Audio keepalive could not start")
             self.process = None
+            self._close_input()
             self.next_start_at = now + self.restart_seconds
 
     def stop(self) -> None:
         process = self.process
         self.process = None
 
-        if process is None or process.poll() is not None:
-            return
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
 
-        process.terminate()
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=2)
-
+        self._close_input()
         LOG.info("Audio keepalive stopped")
 
 
