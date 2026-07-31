@@ -10,14 +10,23 @@
     "test": "test.wav",
     "follow": "follow.wav",
     "sub": "sub.wav",
-    "resub": "sub.wav",
-    "giftsub": "giftsub.wav",
+    "resub": "resub.wav",
+    "giftsub": "gifted.wav",
+    "gifted": "gifted.wav",
+    "giftbomb": "giftbomb.wav",
     "raid": "raid.wav",
     "bits": "bits.wav",
-    "channelpoint": "channelpoint.wav",
-    "moderator": "moderator.wav",
-    "system": "system.wav"
+    "donation": "donation.wav",
+    "charity": "donation.wav",
+    "youtubesub": "sub.wav",
+    "yt_sub": "sub.wav",
+    "channelpoint": "test.wav",
+    "moderator": "test.wav",
+    "system": "test.wav"
   },
-  "audio_player": null,
-  "audio_player_timeout_seconds": 30
+  "audio_player": "pw-play {file}",
+  "audio_player_timeout_seconds": 30,
+  "audio_keepalive_enabled": true,
+  "audio_keepalive_command": "pw-cat --playback --raw --rate=48000 --channels=2 --format=s16 /dev/zero",
+  "audio_keepalive_restart_seconds": 5
 }
