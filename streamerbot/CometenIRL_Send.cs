@@ -18,21 +18,21 @@ public class CPHInline
             return false;
         }
 
-        string eventType = FirstArg("eventType", "type").ToLowerInvariant();
+        string eventType = NormalizeEventType(FirstArg("eventType", "alertType", "alert", "type"));
         if (string.IsNullOrWhiteSpace(eventType))
         {
             eventType = "test";
         }
 
         string userName = FirstArg("user", "userName", "displayName", "targetUser");
-        int amount = FirstIntArg("amount", "viewerCount", "viewers", "bits", "cumulativeMonths");
+        int amount = FirstIntArg("amount", "count", "viewerCount", "viewers", "bits", "months", "cumulativeMonths");
         int priority = FirstIntArg("priority");
         string message = FirstArg("message", "text");
         string sound = FirstArg("sound");
 
         if (string.IsNullOrWhiteSpace(sound))
         {
-            sound = eventType + ".wav";
+            sound = DefaultSound(eventType);
         }
 
         if (priority == 0)
@@ -113,6 +113,51 @@ public class CPHInline
         return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
     }
 
+    private static string NormalizeEventType(string value)
+    {
+        string key = (value ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant()
+            .Replace("-", "_")
+            .Replace(" ", "_");
+
+        switch (key)
+        {
+            case "follower": return "follow";
+            case "subscription": return "sub";
+            case "re_sub":
+            case "resubscription": return "resub";
+            case "gift_sub":
+            case "gifted_sub":
+            case "giftsub": return "gifted";
+            case "gift_bomb":
+            case "community_gift":
+            case "communitygift": return "giftbomb";
+            case "cheer": return "bits";
+            case "charity": return "donation";
+            case "yt_sub":
+            case "youtube_sub": return "youtubesub";
+            default: return key;
+        }
+    }
+
+    private static string DefaultSound(string eventType)
+    {
+        switch (eventType)
+        {
+            case "follow": return "follow.wav";
+            case "sub": return "sub.wav";
+            case "resub": return "resub.wav";
+            case "gifted": return "gifted.wav";
+            case "giftbomb": return "giftbomb.wav";
+            case "bits": return "bits.wav";
+            case "donation": return "donation.wav";
+            case "raid": return "raid.wav";
+            case "youtubesub": return "sub.wav";
+            default: return "test.wav";
+        }
+    }
+
     private static int DefaultPriority(string eventType)
     {
         switch (eventType)
@@ -121,12 +166,16 @@ public class CPHInline
             case "moderator":
                 return 90;
             case "raid":
+            case "giftbomb":
                 return 70;
+            case "gifted":
             case "giftsub":
             case "sub":
             case "resub":
+            case "youtubesub":
                 return 50;
             case "bits":
+            case "donation":
                 return 40;
             case "follow":
                 return 20;
@@ -145,12 +194,19 @@ public class CPHInline
                 return string.IsNullOrWhiteSpace(userName) ? "Ny sub" : "Ny sub: " + userName;
             case "resub":
                 return string.IsNullOrWhiteSpace(userName) ? "Resub" : "Resub: " + userName;
+            case "gifted":
             case "giftsub":
-                return amount > 0 ? "Gift subs: " + amount : "Gift sub";
+                return amount > 0 ? "Gifted subs: " + amount : "Gifted sub";
+            case "giftbomb":
+                return amount > 0 ? "Gift bomb: " + amount : "Gift bomb";
             case "raid":
                 return amount > 0 ? "Raid med " + amount + " seere" : "Ny raid";
             case "bits":
                 return amount > 0 ? amount + " bits" : "Nye bits";
+            case "donation":
+                return amount > 0 ? "Donation: " + amount : "Ny donation";
+            case "youtubesub":
+                return string.IsNullOrWhiteSpace(userName) ? "Ny YouTube subscriber" : "Ny YouTube subscriber: " + userName;
             case "moderator":
                 return "Viktig beskjed fra moderator";
             case "system":
