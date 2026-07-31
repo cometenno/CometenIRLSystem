@@ -26,21 +26,33 @@ PipeWire + Bluetooth-høyttaler
 
 BELABOX fortsetter å håndtere video, lydopptak, bonding og SRT/SRTLA. Alertsystemet kjører separat.
 
-## Status
+## Bekreftet funksjon
 
-Følgende er implementert og testet:
+Følgende er testet i komplett kjede:
 
-- HTTPS sender fra Streamer.bot
-- PHP/MySQL-relay med tokenkontroll
+- HTTPS-sending fra Streamer.bot
+- lagring og uthenting gjennom PHP/MySQL-relay
 - Python-receiver med polling og kvittering
-- Lokale WAV-filer
-- Bluetooth-avspilling gjennom PipeWire
-- Integrert stille keepalive som holder høyttaleren våken
-- Automatisk restart av receiver og keepalive
-- Sentral CometenWebAdmin-integrasjon
-- Follow, Sub, Resub, Gifted Sub, Gift Bomb, Bits, Donation, Raid og YouTube Sub
+- lokal WAV-avspilling gjennom Bluetooth og PipeWire
+- Follow-event med brukernavn og `follow.wav`
+- stille PipeWire-keepalive som holder Bluetooth-høyttaleren våken
 
 Bekreftet baseline: 31. juli 2026.
+
+## Implementert og klart for videre testing
+
+- sentral CometenWebAdmin-integrasjon
+- Sub
+- Resub
+- Gifted Sub
+- Gift Bomb
+- Bits
+- Donation
+- Raid
+- YouTube Sub
+- user-systemd-oppsett for autostart
+
+Hver alerttype bør testes fra CometenWebAdmin etter installasjon.
 
 ## Dokumentasjon
 
