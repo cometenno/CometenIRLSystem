@@ -1,65 +1,110 @@
 # Cometen IRL Alerts
 
-A lightweight return-channel for IRL stream notifications.
+Cometen IRL Alerts er en lettvekts returkanal for varsler under IRL-streaming.
 
-The project sends events from **Streamer.bot** on the home streaming PC to a small receiver running beside **BELABOX** on a Radxa ROCK 5B+. The receiver plays short local alert sounds through the configured audio output, with Bluetooth speaker support planned as the primary field setup.
+Systemet sender alerts fra **Streamer.bot** på streaming-PC-en til en HTTPS-relay på webhotellet. En Linux-enhet ved IRL-riggen henter eventene og spiller lokale WAV-filer gjennom en Bluetooth-høyttaler.
 
-## Architecture
+## Arkitektur
 
 ```text
-Twitch / YouTube event
+Twitch / YouTube / CometenWebAdmin
         |
         v
-Streamer.bot at home
+Streamer.bot på streaming-PC
         |
         | HTTPS POST
         v
-Cometen IRL Relay
+PHP/MySQL-relay på webhotell
         |
-        | HTTPS long polling / polling
+        | HTTPS polling
         v
-ROCK 5B+ receiver beside BELABOX
+Raspberry Pi / ROCK 5B+ ved BELABOX
         |
         v
-Bluetooth speaker
+PipeWire + Bluetooth-høyttaler
 ```
 
-BELABOX remains responsible for video, audio capture, bonding and SRT/SRTLA transport. This project runs as a separate service and does not modify BELABOX.
-
-## V1 goal
-
-1. Run a test action in Streamer.bot.
-2. Send a signed JSON event to the relay.
-3. Receive the event on the ROCK 5B+.
-4. Play a local `test.wav` sound.
-5. Acknowledge the event so it is not replayed.
-
-## Planned event types
-
-- `test`
-- `follow`
-- `sub`
-- `resub`
-- `giftsub`
-- `raid`
-- `bits`
-- `channelpoint`
-- `moderator`
-- `system`
-
-## Repository layout
-
-```text
-streamerbot/   Streamer.bot C# sender actions
-relay/         PHP and MySQL relay API
-receiver/      Python receiver for the ROCK 5B+
-docs/          Setup and architecture documentation
-```
-
-## Security
-
-Never commit real API tokens or database credentials. Copy the example configuration files and keep the real files outside Git or ignored by `.gitignore`.
+BELABOX fortsetter å håndtere video, lydopptak, bonding og SRT/SRTLA. Alertsystemet kjører separat.
 
 ## Status
 
-Initial development scaffold.
+Følgende er implementert og testet:
+
+- HTTPS sender fra Streamer.bot
+- PHP/MySQL-relay med tokenkontroll
+- Python-receiver med polling og kvittering
+- Lokale WAV-filer
+- Bluetooth-avspilling gjennom PipeWire
+- Integrert stille keepalive som holder høyttaleren våken
+- Automatisk restart av receiver og keepalive
+- Sentral CometenWebAdmin-integrasjon
+- Follow, Sub, Resub, Gifted Sub, Gift Bomb, Bits, Donation, Raid og YouTube Sub
+
+Bekreftet baseline: 31. juli 2026.
+
+## Dokumentasjon
+
+Komplett norsk installasjonsguide:
+
+- [Installasjon - Cometen IRL Alerts](docs/INSTALLASJON_NO.md)
+
+CometenWebAdmin-integrasjon:
+
+- [Sentral alertintegrasjon](integration/cometenwebadmin/README_NO.md)
+
+## Repo-oppsett
+
+```text
+streamerbot/                  Streamer.bot C#-sender
+relay/                        PHP/MySQL-relay
+receiver/                     Python-receiver, lydfiler og user-systemd
+integration/cometenwebadmin/  Sentral videresending fra eksisterende alerts
+docs/                         Installasjon og dokumentasjon
+```
+
+## Rask receiver-test
+
+```bash
+cd ~/CometenIRLAlerts
+git pull
+cd receiver
+python3 receiver.py config.json
+```
+
+Forventet oppstart:
+
+```text
+Cometen IRL Alert Receiver started
+Relay: https://dittdomene.no/CometenIRLAlerts_Relay
+Audio keepalive started through PipeWire
+```
+
+## Autostart
+
+Bruk user-systemd fordi PipeWire og Bluetooth kjører i brukerens lydsesjon:
+
+```bash
+cd ~/CometenIRLAlerts/receiver
+bash install-user-service.sh
+sudo loginctl enable-linger "$USER"
+```
+
+Status og logg:
+
+```bash
+systemctl --user status cometen-irl-alerts.service
+journalctl --user -u cometen-irl-alerts.service -f
+```
+
+## Sikkerhet
+
+Virkelige token, databasepassord og lokale konfigurasjonsfiler skal aldri legges i GitHub.
+
+Hold disse private:
+
+```text
+relay/config.php
+receiver/config.json
+```
+
+Bruk alltid forskjellige sender- og receiver-token, og roter dem straks dersom de blir eksponert.
