@@ -46,7 +46,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.1",
+        "User-Agent": "CometenIRLAlerts/0.2",
     }
 
     if payload is not None:
@@ -73,6 +73,91 @@ def request_json(
         raise RuntimeError("Relay returned an unexpected response")
 
     return decoded
+
+
+def command_from_config(value: Any, default: list[str]) -> list[str]:
+    if isinstance(value, list) and value:
+        return [str(item) for item in value]
+
+    if isinstance(value, str) and value.strip():
+        return shlex.split(value)
+
+    return list(default)
+
+
+class AudioKeepalive:
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.enabled = bool(config.get("audio_keepalive_enabled", True))
+        self.command = command_from_config(
+            config.get("audio_keepalive_command"),
+            [
+                "pw-cat",
+                "--playback",
+                "--raw",
+                "--rate=48000",
+                "--channels=2",
+                "--format=s16",
+                "/dev/zero",
+            ],
+        )
+        self.restart_seconds = max(
+            2.0, float(config.get("audio_keepalive_restart_seconds", 5))
+        )
+        self.process: subprocess.Popen[bytes] | None = None
+        self.next_start_at = 0.0
+
+    def ensure_running(self) -> None:
+        if not self.enabled:
+            return
+
+        if self.process is not None and self.process.poll() is None:
+            return
+
+        now = time.monotonic()
+        if now < self.next_start_at:
+            return
+
+        if self.process is not None:
+            LOG.warning("Audio keepalive stopped with exit code %s", self.process.poll())
+            self.process = None
+
+        executable = shutil.which(self.command[0])
+        if executable is None:
+            LOG.warning("Audio keepalive command was not found: %s", self.command[0])
+            self.next_start_at = now + 30.0
+            return
+
+        command = [executable, *self.command[1:]]
+
+        try:
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.next_start_at = now + self.restart_seconds
+            LOG.info("Audio keepalive started through PipeWire")
+        except Exception:
+            LOG.exception("Audio keepalive could not start")
+            self.process = None
+            self.next_start_at = now + self.restart_seconds
+
+    def stop(self) -> None:
+        process = self.process
+        self.process = None
+
+        if process is None or process.poll() is not None:
+            return
+
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+
+        LOG.info("Audio keepalive stopped")
 
 
 def build_player_command(config: dict[str, Any], sound_path: Path) -> list[str]:
@@ -182,51 +267,58 @@ def run(config_path: Path) -> None:
     interval = max(0.25, float(config.get("poll_interval_seconds", 0.75)))
     batch_size = max(1, min(10, int(config.get("batch_size", 5))))
     backoff = interval
+    keepalive = AudioKeepalive(config)
 
     LOG.info("Cometen IRL Alert Receiver started")
     LOG.info("Relay: %s", base_url)
+    keepalive.ensure_running()
 
-    while True:
-        try:
-            response = request_json(
-                "GET",
-                f"{base_url}/poll.php?limit={batch_size}",
-                token,
-                timeout,
-            )
+    try:
+        while True:
+            keepalive.ensure_running()
 
-            if not response.get("ok"):
-                raise RuntimeError(f"Relay rejected poll: {response}")
+            try:
+                response = request_json(
+                    "GET",
+                    f"{base_url}/poll.php?limit={batch_size}",
+                    token,
+                    timeout,
+                )
 
-            events = response.get("events", [])
-            if not isinstance(events, list):
-                raise RuntimeError("Relay returned an invalid event list")
+                if not response.get("ok"):
+                    raise RuntimeError(f"Relay rejected poll: {response}")
 
-            for event in events:
-                if not isinstance(event, dict):
-                    continue
+                events = response.get("events", [])
+                if not isinstance(events, list):
+                    raise RuntimeError("Relay returned an invalid event list")
 
-                try:
-                    play_event(config, event, config_dir)
-                except Exception:
-                    LOG.exception("Alert playback failed for event %s", event.get("id", ""))
-                finally:
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+
                     try:
-                        acknowledge(base_url, token, timeout, event)
+                        play_event(config, event, config_dir)
                     except Exception:
-                        LOG.exception("Could not acknowledge event %s", event.get("id", ""))
+                        LOG.exception("Alert playback failed for event %s", event.get("id", ""))
+                    finally:
+                        try:
+                            acknowledge(base_url, token, timeout, event)
+                        except Exception:
+                            LOG.exception("Could not acknowledge event %s", event.get("id", ""))
 
-            backoff = interval
-            if not events:
-                time.sleep(interval)
+                backoff = interval
+                if not events:
+                    time.sleep(interval)
 
-        except KeyboardInterrupt:
-            LOG.info("Receiver stopped")
-            return
-        except Exception:
-            LOG.exception("Receiver loop failed")
-            time.sleep(backoff)
-            backoff = min(15.0, max(interval, backoff * 2.0))
+            except KeyboardInterrupt:
+                LOG.info("Receiver stopped")
+                return
+            except Exception:
+                LOG.exception("Receiver loop failed")
+                time.sleep(backoff)
+                backoff = min(15.0, max(interval, backoff * 2.0))
+    finally:
+        keepalive.stop()
 
 
 def main() -> int:
