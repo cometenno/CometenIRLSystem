@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+      - initial-v0.1
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python
+        run: python -m py_compile receiver/receiver.py
+
+      - name: Install PHP CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-cli
+
+      - name: Validate PHP
+        run: find relay -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Validate shell scripts
+        run: bash -n receiver/install.sh receiver/uninstall.sh

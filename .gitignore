@@ -1,0 +1,22 @@
+# Secrets and local configuration
+relay/config.php
+receiver/config.json
+.env
+*.env
+
+# Runtime files
+*.log
+*.pid
+__pycache__/
+*.py[cod]
+
+# Local alert audio
+receiver/sounds/*.wav
+receiver/sounds/*.mp3
+!receiver/sounds/README.md
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
