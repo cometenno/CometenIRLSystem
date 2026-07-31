@@ -27,6 +27,7 @@
   "audio_player": "pw-play {file}",
   "audio_player_timeout_seconds": 30,
   "audio_keepalive_enabled": true,
-  "audio_keepalive_command": "pw-cat --playback --raw --rate=48000 --channels=2 --format=s16 /dev/zero",
+  "audio_keepalive_command": "pw-cat --playback --rate=48000 --channels=2 --format=s16 -",
+  "audio_keepalive_input": "/dev/zero",
   "audio_keepalive_restart_seconds": 5
 }
