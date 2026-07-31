@@ -42,6 +42,8 @@ Bekreftet baseline: 31. juli 2026.
 ## Implementert og klart for videre testing
 
 - sentral CometenWebAdmin-integrasjon
+- IRL-hovedbryter i Alerts-fanen
+- separate IRL-brytere for hver vanlig alerttype
 - Sub
 - Resub
 - Gifted Sub
@@ -51,6 +53,8 @@ Bekreftet baseline: 31. juli 2026.
 - Raid
 - YouTube Sub
 - user-systemd-oppsett for autostart
+
+IRL-bryterne påvirker bare videresendingen til IRL-mottakeren. Vanlige OBS-alerts fortsetter å virke.
 
 Hver alerttype bør testes fra CometenWebAdmin etter installasjon.
 
@@ -62,7 +66,7 @@ Komplett norsk installasjonsguide:
 
 CometenWebAdmin-integrasjon:
 
-- [Sentral alertintegrasjon](integration/cometenwebadmin/README_NO.md)
+- [Sentral alertintegrasjon og IRL-brytere](integration/cometenwebadmin/README_NO.md)
 
 ## Repo-oppsett
 
@@ -118,5 +122,3 @@ Hold disse private:
 relay/config.php
 receiver/config.json
 ```
-
-Bruk alltid forskjellige sender- og receiver-token, og roter dem straks dersom de blir eksponert.
