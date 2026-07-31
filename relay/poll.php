@@ -27,19 +27,20 @@ FOR UPDATE
 SQL;
 
     $events = $pdo->query($sql)->fetchAll();
-    $update = $pdo->prepare(
-        'UPDATE irl_alert_events
-         SET lease_id = :lease_id,
-             leased_until = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL :lease_seconds SECOND)
-         WHERE id = :id'
-    );
+    $updateSql = <<<SQL
+UPDATE irl_alert_events
+SET lease_id = :lease_id,
+    leased_until = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$leaseSeconds} SECOND)
+WHERE id = :id
+SQL;
+    $update = $pdo->prepare($updateSql);
 
     foreach ($events as &$event) {
         $leaseId = bin2hex(random_bytes(16));
-        $update->bindValue(':lease_id', $leaseId, PDO::PARAM_STR);
-        $update->bindValue(':lease_seconds', $leaseSeconds, PDO::PARAM_INT);
-        $update->bindValue(':id', $event['id'], PDO::PARAM_STR);
-        $update->execute();
+        $update->execute([
+            ':lease_id' => $leaseId,
+            ':id' => $event['id'],
+        ]);
 
         $event = [
             'id' => $event['id'],
