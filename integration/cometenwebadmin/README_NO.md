@@ -1,10 +1,10 @@
 # CometenWebAdmin-integrasjon
 
-Denne integrasjonen sender de eksisterende CometenWebAdmin-alertene videre til `Cometen IRL Notifications - Send` uten at IRL-kode må legges inn i hver Follow-, Sub-, Raid- eller Bits-action.
+Denne integrasjonen sender eksisterende CometenWebAdmin-alerts videre til `Cometen IRL Notifications - Send` uten at IRL-kode legges inn i hver enkelt Follow-, Sub-, Raid- eller Bits-action.
 
-## CWA v19.6 - IRL-kontroller
+## CWA v19.9 - IRL settings sync
 
-Alerts-fanen har egne IRL-innstillinger:
+Alerts-fanen har:
 
 - hovedbryter for alle IRL-alerts
 - Follow
@@ -17,20 +17,57 @@ Alerts-fanen har egne IRL-innstillinger:
 - Raid
 - YouTube Sub
 
-Innstillingene lagres sammen med de eksisterende Alerts-innstillingene i Streamer.bot. Eldre lagrede innstillinger uten en IRL-seksjon behandles som ON for bakoverkompatibilitet.
+Innstillingene lagres sammen med de vanlige Alerts-innstillingene i Streamer.bot. Når hovedbryteren eller én alerttype er OFF, skal bare IRL-videresendingen stoppe. Den normale OBS-alerten fortsetter.
 
-Når hovedbryteren er OFF, stopper bare videresendingen til IRL-mottakeren. Vanlige OBS-alerts fortsetter uendret.
+## Bekreftet 1. august 2026
+
+Denne kjeden virket:
+
+```text
+Follow-test fra CometenWebAdmin
+-> alerts.html
+-> irl-forward.js
+-> Cometen IRL Notifications - Send
+-> HTTPS-relay
+-> receiver.py på Raspberry Pi 5
+-> PipeWire / Bluetooth-lydutgang
+```
+
+Manuell IRL-test virket også.
+
+## Viktig browser-state-fiks
+
+Streaming-PC-en hadde gammel `localStorage` som blokkerte IRL-videresending, selv om de samme filene virket på gaming-PC-en.
+
+Den oppdaterte `alerts.html` bruker:
+
+```text
+universal_alert_webadmin_v2_settings
+```
+
+Ikke endre den tilbake til v1.
+
+## Settings-synkronisering
+
+Den oppdaterte overlayfila:
+
+- henter innstillinger via `CWA - Alerts Status`
+- godtar meldingen `ALERTS_SETTINGS`
+- lagrer mottatte innstillinger i v2-state
+- gjør `adminSettings.irl` tilgjengelig for `irl-forward.js`
+
+Av/på-fiksen er lagret i prosjektet, men trenger siste praktiske test etter utrulling.
 
 ## Filer
 
-Plasser disse i den lokale Alerts-mappen:
+Plasser disse i samme lokale Alerts-mappe:
 
 ```text
 alerts.html
 irl-forward.js
 ```
 
-`alerts.html` må laste integrasjonen rett før `</body>`:
+`alerts.html` laster integrasjonen rett før `</body>`:
 
 ```html
 <script src="irl-forward.js"></script>
@@ -38,39 +75,27 @@ irl-forward.js
 
 ## Streamer.bot
 
-Kontroller at WebSocket-serveren kjører på:
+WebSocket-server:
 
 ```text
 127.0.0.1:8081
 ```
 
-Streamer.bot-actionen må hete nøyaktig:
+Nødvendige actions:
 
 ```text
+CWA - Alerts Status
+CWA - Alerts Save Settings
+CWA - Alerts Send Config
+CWA - Alerts Test
 Cometen IRL Notifications - Send
 ```
 
-## Bruk
+## Testrekkefølge
 
-1. Åpne Alerts-fanen i CometenWebAdmin.
-2. Slå `Enable IRL alerts` av eller på.
-3. Velg hvilke alerttyper som skal sendes til IRL.
-4. Trykk `Save IRL settings`.
-5. Trykk `Refresh IRL settings` og kontroller statusfeltet.
-6. Oppdater OBS Browser Source etter at `alerts.html` eller `irl-forward.js` er erstattet.
+1. IRL ON og Follow ON - lokal alert og lyd på receiver.
+2. IRL OFF - bare lokal alert.
+3. IRL ON og Follow OFF - bare lokal Follow-alert.
+4. IRL ON og Follow ON - receiverlyden skal komme tilbake.
 
-## Test
-
-Start receiveren på Linux-enheten og kjør en alerttest fra CometenWebAdmin.
-
-Når typen er aktiv, skal receiver-loggen vise for eksempel:
-
-```text
-Playing event ... type=follow ... sound=follow.wav
-```
-
-Når hovedbryteren eller den aktuelle typen er OFF, skal den normale OBS-alerten vises, men receiveren skal ikke motta eventen.
-
-## Viktig
-
-Ikke legg en ekstra `Run Action` til IRL-senderen i de enkelte alert-actionene når denne integrasjonen brukes. Det vil gi doble varsler.
+Ikke legg ekstra `Run Action` til IRL-senderen i hver alert-action. Det kan gi doble varsler.
