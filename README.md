@@ -41,12 +41,19 @@ Testet i komplett kjede per 1. august 2026:
 
 ## CometenWebAdmin-integrasjon
 
-Prosjektet inneholder en komplett integrasjonskopi:
+Den kanoniske alert-overlayfila ligger i det separate private prosjektet:
 
 ```text
-integration/cometenwebadmin/alerts.html
+la1ona/cometenWebAdmin
+└── alerts/alerts.html
+```
+
+Dette prosjektet inneholder IRL-integrasjonen og dokumentasjonen:
+
+```text
 integration/cometenwebadmin/irl-forward.js
 integration/cometenwebadmin/README_NO.md
+integration/cometenwebadmin/VERSION
 ```
 
 Versjon 19.9 retter:
