@@ -56,11 +56,23 @@ Den oppdaterte overlayfila:
 - lagrer mottatte innstillinger i v2-state
 - gjør `adminSettings.irl` tilgjengelig for `irl-forward.js`
 
-Av/på-fiksen er lagret i prosjektet, men trenger siste praktiske test etter utrulling.
+Av/på-fiksen er lagret i prosjektene, men trenger siste praktiske test etter utrulling.
 
 ## Filer
 
-Plasser disse i samme lokale Alerts-mappe:
+Den kanoniske overlayfila ligger i:
+
+```text
+la1ona/cometenWebAdmin/alerts/alerts.html
+```
+
+IRL-scriptet ligger i dette prosjektet:
+
+```text
+integration/cometenwebadmin/irl-forward.js
+```
+
+Kopier begge til samme lokale Alerts-mappe:
 
 ```text
 alerts.html
