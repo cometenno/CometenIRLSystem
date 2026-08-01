@@ -2,7 +2,7 @@
 
 Cometen IRL Alerts er en lettvekts returkanal for varsler under IRL-streaming.
 
-Systemet sender alerts fra **Streamer.bot** på streaming-PC-en til en HTTPS-relay på webhotellet. En Linux-enhet ved IRL-riggen henter eventene og spiller lokale WAV-filer gjennom en Bluetooth-høyttaler.
+Systemet sender alerts fra Streamer.bot på streaming-PC-en til en HTTPS-relay på webhotellet. En Linux-enhet ved IRL-riggen henter eventene og spiller lokale WAV-filer gjennom en PipeWire/Bluetooth-lydutgang.
 
 ## Arkitektur
 
@@ -21,52 +21,42 @@ PHP/MySQL-relay på webhotell
 Raspberry Pi / ROCK 5B+ ved BELABOX
         |
         v
-PipeWire + Bluetooth-høyttaler
+PipeWire + Bluetooth-høyttaler eller headset
 ```
 
-BELABOX fortsetter å håndtere video, lydopptak, bonding og SRT/SRTLA. Alertsystemet kjører separat.
+BELABOX håndterer video, lydopptak, bonding og SRT/SRTLA. Alertsystemet kjører separat.
 
 ## Bekreftet funksjon
 
-Følgende er testet i komplett kjede:
+Testet i komplett kjede per 1. august 2026:
 
 - HTTPS-sending fra Streamer.bot
 - lagring og uthenting gjennom PHP/MySQL-relay
 - Python-receiver med polling og kvittering
-- lokal WAV-avspilling gjennom Bluetooth og PipeWire
-- Follow-event med brukernavn og `follow.wav`
-- stille PipeWire-keepalive som holder Bluetooth-høyttaleren våken
+- lokal WAV-avspilling gjennom PipeWire og Bluetooth
+- Follow-event fra CometenWebAdmin til receiver
+- manuell IRL-test
+- stille PipeWire-keepalive
+- valg av aktiv PipeWire sink med `wpctl set-default`
 
-Bekreftet baseline: 31. juli 2026.
+## CometenWebAdmin-integrasjon
 
-## Implementert og klart for videre testing
+Prosjektet inneholder en komplett integrasjonskopi:
 
-- sentral CometenWebAdmin-integrasjon
-- IRL-hovedbryter i Alerts-fanen
-- separate IRL-brytere for hver vanlig alerttype
-- Sub
-- Resub
-- Gifted Sub
-- Gift Bomb
-- Bits
-- Donation
-- Raid
-- YouTube Sub
-- user-systemd-oppsett for autostart
+```text
+integration/cometenwebadmin/alerts.html
+integration/cometenwebadmin/irl-forward.js
+integration/cometenwebadmin/README_NO.md
+```
 
-IRL-bryterne påvirker bare videresendingen til IRL-mottakeren. Vanlige OBS-alerts fortsetter å virke.
+Versjon 19.9 retter:
 
-Hver alerttype bør testes fra CometenWebAdmin etter installasjon.
+- stale browser-state ved å bruke `universal_alert_webadmin_v2_settings`
+- settings-innlasting via `CWA - Alerts Status`
+- mottak av `ALERTS_SETTINGS`
+- IRL master- og per-alert-innstillinger
 
-## Dokumentasjon
-
-Komplett norsk installasjonsguide:
-
-- [Installasjon - Cometen IRL Alerts](docs/INSTALLASJON_NO.md)
-
-CometenWebAdmin-integrasjon:
-
-- [Sentral alertintegrasjon og IRL-brytere](integration/cometenwebadmin/README_NO.md)
+OFF/ON-kontrollene trenger siste praktiske test etter at v19.9-filene er lagt inn.
 
 ## Repo-oppsett
 
@@ -87,17 +77,16 @@ cd receiver
 python3 receiver.py config.json
 ```
 
-Forventet oppstart:
+## Bytte PipeWire-lydutgang
 
-```text
-Cometen IRL Alert Receiver started
-Relay: https://dittdomene.no/CometenIRLAlerts_Relay
-Audio keepalive started through PipeWire
+```bash
+wpctl status
+wpctl set-default SINK_ID
 ```
 
-## Autostart
+Start receiveren på nytt dersom den allerede kjørte da lydutgangen ble endret.
 
-Bruk user-systemd fordi PipeWire og Bluetooth kjører i brukerens lydsesjon:
+## Autostart
 
 ```bash
 cd ~/CometenIRLAlerts/receiver
