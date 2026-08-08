@@ -46,7 +46,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.2",
+        "User-Agent": "CometenIRLAlerts/0.3",
     }
 
     if payload is not None:
@@ -278,6 +278,64 @@ def play_event(config: dict[str, Any], event: dict[str, Any], config_dir: Path) 
     )
 
 
+def run_wpctl(*arguments: str) -> str:
+    executable = shutil.which("wpctl")
+    if executable is None:
+        raise RuntimeError("wpctl was not found; PipeWire/WirePlumber control is unavailable")
+
+    completed = subprocess.run(
+        [executable, *arguments],
+        check=True,
+        timeout=10,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
+    if not bool(config.get("remote_control_enabled", True)):
+        raise RuntimeError("IRL remote control is disabled in config")
+
+    action = str(event.get("message", "")).strip().lower()
+    value = int(event.get("amount", 0) or 0)
+    step = max(1, min(25, int(config.get("remote_volume_step_percent", 5))))
+    max_volume = max(1, min(100, int(config.get("remote_volume_max_percent", 100))))
+    sink = str(config.get("remote_audio_sink", "@DEFAULT_AUDIO_SINK@")).strip()
+    if not sink:
+        sink = "@DEFAULT_AUDIO_SINK@"
+
+    if action == "volume_set":
+        value = max(0, min(max_volume, value))
+        run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
+        LOG.info("Remote control: volume set to %s%%", value)
+        return
+
+    if action == "volume_up":
+        run_wpctl("set-volume", sink, f"{step}%+")
+        LOG.info("Remote control: volume increased by %s%%", step)
+        return
+
+    if action == "volume_down":
+        run_wpctl("set-volume", sink, f"{step}%-")
+        LOG.info("Remote control: volume decreased by %s%%", step)
+        return
+
+    if action == "mute":
+        run_wpctl("set-mute", sink, "1")
+        LOG.info("Remote control: muted")
+        return
+
+    if action == "unmute":
+        run_wpctl("set-mute", sink, "0")
+        LOG.info("Remote control: unmuted")
+        return
+
+    raise ValueError(f"Unsupported remote control action: {action or '<empty>'}")
+
+
 def acknowledge(
     base_url: str,
     token: str,
@@ -338,9 +396,13 @@ def run(config_path: Path) -> None:
                         continue
 
                     try:
-                        play_event(config, event, config_dir)
+                        event_type = str(event.get("type", "")).strip().lower()
+                        if event_type == "control":
+                            handle_control(config, event)
+                        else:
+                            play_event(config, event, config_dir)
                     except Exception:
-                        LOG.exception("Alert playback failed for event %s", event.get("id", ""))
+                        LOG.exception("Event handling failed for event %s", event.get("id", ""))
                     finally:
                         try:
                             acknowledge(base_url, token, timeout, event)
