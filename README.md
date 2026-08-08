@@ -28,7 +28,7 @@ BELABOX håndterer video, lydopptak, bonding og SRT/SRTLA. Alertsystemet kjører
 
 ## Bekreftet funksjon
 
-Testet i komplett kjede per 1. august 2026:
+Testet i komplett kjede per 8. august 2026:
 
 - HTTPS-sending fra Streamer.bot
 - lagring og uthenting gjennom PHP/MySQL-relay
@@ -38,6 +38,28 @@ Testet i komplett kjede per 1. august 2026:
 - manuell IRL-test
 - stille PipeWire-keepalive
 - valg av aktiv PipeWire sink med `wpctl set-default`
+- Radxa ROCK 5B+ / BELABOX med Realtek `rtk_btusb`
+- automatisk WPS200-tilkobling etter boot
+- headless oppstart av PipeWire, WirePlumber og receiver uten SSH-login
+- alert fra CometenWebAdmin etter kald boot uten manuell innlogging
+
+## BELABOX ROCK 5B+ - egen guide
+
+Det verifiserte BELABOX-oppsettet er dokumentert separat:
+
+[`docs/BELABOX_ROCK5B_HEADLESS_NO.md`](docs/BELABOX_ROCK5B_HEADLESS_NO.md)
+
+Guiden dokumenterer hele løsningen vi måtte bruke på BELABOX-imagen, inkludert:
+
+- Realtek RTL8852BE / USB ID `13d3:3572`
+- `rtk_btusb` i stedet for generisk `btusb`
+- firmware-symlinker for `rtl8852bu_fw` og `rtl8852bu_config`
+- PipeWire og WirePlumber
+- WirePlumber 0.4.8 headless/logind-fiks
+- WPS200 system-watchdog
+- `user@1000.service` og `loginctl enable-linger`
+- stille `pw-play`-keepalive
+- kaldstarttest uten SSH-login
 
 ## CometenWebAdmin-integrasjon
 
