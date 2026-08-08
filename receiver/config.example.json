@@ -31,7 +31,8 @@
   "audio_keepalive_input": "/dev/zero",
   "audio_keepalive_restart_seconds": 5,
   "remote_control_enabled": true,
-  "remote_audio_sink": "@DEFAULT_AUDIO_SINK@",
+  "remote_audio_sink": "auto",
+  "remote_audio_sink_match": "WPS200",
   "remote_volume_step_percent": 5,
   "remote_volume_max_percent": 100
 }
