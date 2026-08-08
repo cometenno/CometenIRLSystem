@@ -24,7 +24,9 @@ public class CPHInline
 
         if (string.IsNullOrWhiteSpace(action))
         {
-            string input = FirstArg("rawInput", "command", "message", "input0");
+            // For Streamer.bot command triggers, input0 is normally the first value after the command.
+            // Prefer it over rawInput so "!volum 30" reliably resolves to "30".
+            string input = FirstArg("input0", "rawInput", "command", "message");
             if (!TryParseCommand(input, out action, out value))
             {
                 CPH.LogError("CometenIRL Remote: Could not parse remote command: " + input);
@@ -112,7 +114,8 @@ public class CPHInline
             return true;
         }
 
-        Match match = Regex.Match(text, @"^!?vol\s*(\d{1,3})$");
+        // Accept: 30, !vol30, !vol 30, !volum30 and !volum 30.
+        Match match = Regex.Match(text, @"^!?vol(?:um)?\s*(\d{1,3})$");
         if (!match.Success)
         {
             match = Regex.Match(text, @"^(\d{1,3})$");
