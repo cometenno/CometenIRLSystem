@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 public class CPHInline
 {
@@ -16,6 +17,7 @@ public class CPHInline
         if (string.IsNullOrWhiteSpace(relayBaseUrl) || string.IsNullOrWhiteSpace(senderToken))
         {
             CPH.LogError("CometenIRL Remote: Missing CometenIRL_RelayUrl or CometenIRL_SenderToken.");
+            SendChat("IRL: relay-oppsettet mangler.");
             return false;
         }
 
@@ -30,6 +32,7 @@ public class CPHInline
             if (!TryParseCommand(input, out action, out value))
             {
                 CPH.LogError("CometenIRL Remote: Could not parse remote command: " + input);
+                SendChat("IRL: bruk !volum 0-100.");
                 return false;
             }
         }
@@ -37,6 +40,7 @@ public class CPHInline
         if (!ValidateAction(action, ref value))
         {
             CPH.LogError("CometenIRL Remote: Invalid action/value: " + action + " / " + value);
+            SendChat("IRL: ugyldig kommando eller verdi.");
             return false;
         }
 
@@ -69,19 +73,85 @@ public class CPHInline
                     if (!response.IsSuccessStatusCode)
                     {
                         CPH.LogError("CometenIRL Remote: Relay returned HTTP " + (int)response.StatusCode + ": " + responseBody);
+                        SendChat("IRL: relay avviste kommandoen.");
                         return false;
                     }
-
-                    CPH.LogInfo("CometenIRL Remote: Sent " + action + (action == "volume_set" ? " " + value + "%" : "") + ".");
-                    return true;
                 }
             }
+
+            CPH.LogInfo("CometenIRL Remote: Sent " + action + (action == "volume_set" ? " " + value + "%" : "") + ". Waiting for BELABOX confirmation.");
+
+            bool resultOk;
+            string resultMessage;
+            if (WaitForResult(relayBaseUrl, senderToken, eventId, out resultOk, out resultMessage))
+            {
+                if (string.IsNullOrWhiteSpace(resultMessage))
+                {
+                    resultMessage = resultOk ? "IRL: kommando utført." : "IRL: kommando feilet.";
+                }
+
+                CPH.LogInfo("CometenIRL Remote: BELABOX result: " + resultMessage);
+                SendChat(resultMessage);
+                return resultOk;
+            }
+
+            CPH.LogError("CometenIRL Remote: No BELABOX confirmation received for " + eventId + ".");
+            SendChat("IRL: ingen bekreftelse fra BELABOX.");
+            return false;
         }
         catch (Exception exception)
         {
             CPH.LogError("CometenIRL Remote: Send failed: " + exception.Message);
+            SendChat("IRL: kunne ikke kontakte relay/BELABOX.");
             return false;
         }
+    }
+
+    private bool WaitForResult(string relayBaseUrl, string senderToken, string eventId, out bool resultOk, out string resultMessage)
+    {
+        resultOk = false;
+        resultMessage = string.Empty;
+        string endpoint = relayBaseUrl.TrimEnd('/') + "/control_result.php?id=" + Uri.EscapeDataString(eventId);
+
+        // Receiver polls every ~0.75s. Five seconds gives room for relay, receiver execution and acknowledgement.
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, endpoint))
+            {
+                request.Headers.TryAddWithoutValidation("X-Cometen-Token", senderToken.Trim());
+
+                using (HttpResponseMessage response = Http.SendAsync(request).GetAwaiter().GetResult())
+                {
+                    string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        CPH.LogError("CometenIRL Remote: Result endpoint HTTP " + (int)response.StatusCode + ": " + body);
+                        return false;
+                    }
+
+                    if (body.IndexOf("\"ready\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        resultOk = body.IndexOf("\"result_ok\":true", StringComparison.OrdinalIgnoreCase) >= 0;
+                        resultMessage = ExtractJsonString(body, "message");
+                        return true;
+                    }
+                }
+            }
+
+            Thread.Sleep(250);
+        }
+
+        return false;
+    }
+
+    private void SendChat(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        CPH.SendMessage(message.Trim(), true, true);
     }
 
     private bool TryParseCommand(string input, out string action, out int value)
@@ -114,6 +184,12 @@ public class CPHInline
             return true;
         }
 
+        if (text == "!irlstatus" || text == "irlstatus" || text == "status")
+        {
+            action = "status";
+            return true;
+        }
+
         // Accept: 30, !vol30, !vol 30, !volum30 and !volum 30.
         Match match = Regex.Match(text, @"^!?vol(?:um)?\s*(\d{1,3})$");
         if (!match.Success)
@@ -140,6 +216,7 @@ public class CPHInline
             case "volume_down":
             case "mute":
             case "unmute":
+            case "status":
                 value = 0;
                 return true;
             default:
@@ -170,6 +247,37 @@ public class CPHInline
         string value = FirstArg(names);
         int parsed;
         return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
+    }
+
+    private static string ExtractJsonString(string json, string key)
+    {
+        Match match = Regex.Match(
+            json ?? string.Empty,
+            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"",
+            RegexOptions.IgnoreCase
+        );
+
+        if (!match.Success)
+        {
+            return string.Empty;
+        }
+
+        return JsonUnescape(match.Groups[1].Value);
+    }
+
+    private static string JsonUnescape(string value)
+    {
+        if (value == null)
+        {
+            return string.Empty;
+        }
+
+        return value
+            .Replace("\\n", "\n")
+            .Replace("\\r", "\r")
+            .Replace("\\t", "\t")
+            .Replace("\\\"", "\"")
+            .Replace("\\\\", "\\");
     }
 
     private static string JsonEscape(string value)
