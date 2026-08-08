@@ -47,7 +47,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.4.0",
+        "User-Agent": "CometenIRLAlerts/0.4.1",
     }
 
     if payload is not None:
@@ -332,6 +332,52 @@ def resolve_audio_sink(config: dict[str, Any]) -> str:
     raise RuntimeError(f"Could not find Audio/Sink matching '{match_text}'")
 
 
+def format_uptime() -> str:
+    try:
+        uptime_seconds = int(float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0]))
+    except Exception:
+        return "?"
+
+    days, remainder = divmod(uptime_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes = remainder // 60
+
+    if days:
+        return f"{days}d {hours}t"
+    if hours:
+        return f"{hours}t {minutes}m"
+    return f"{minutes}m"
+
+
+def current_wifi_status() -> str:
+    executable = shutil.which("nmcli")
+    if executable is None:
+        return "WiFi ?"
+
+    try:
+        completed = subprocess.run(
+            [executable, "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
+            check=True,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except Exception:
+        return "WiFi ?"
+
+    for line in completed.stdout.splitlines():
+        parts = line.split(":", 3)
+        if len(parts) != 4:
+            continue
+        device, device_type, state, connection = parts
+        if device_type == "wifi" and state == "connected":
+            return f"WiFi {connection or device}"
+
+    return "WiFi offline"
+
+
 def handle_control(config: dict[str, Any], event: dict[str, Any]) -> str:
     if not bool(config.get("remote_control_enabled", True)):
         raise RuntimeError("IRL remote control is disabled in config")
@@ -370,8 +416,19 @@ def handle_control(config: dict[str, Any], event: dict[str, Any]) -> str:
         return f"IRL: {match_text} unmuted"
 
     if action == "status":
-        LOG.info("Remote control: status requested; audio sink %s is node %s", match_text, sink)
-        return f"IRL status: BELABOX online | {match_text} tilkoblet | Audio OK (node {sink})"
+        wifi = current_wifi_status()
+        uptime = format_uptime()
+        LOG.info(
+            "Remote control: status requested; audio sink %s is node %s; %s; uptime %s",
+            match_text,
+            sink,
+            wifi,
+            uptime,
+        )
+        return (
+            f"IRL status: BELABOX online | {match_text} OK | Audio node {sink} | "
+            f"{wifi} | Uptime {uptime}"
+        )
 
     raise ValueError(f"Unsupported remote control action: {action or '<empty>'}")
 
