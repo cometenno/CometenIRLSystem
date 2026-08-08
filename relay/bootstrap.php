@@ -123,6 +123,7 @@ function event_types(): array
         'channelpoint',
         'moderator',
         'system',
+        'control',
     ];
 }
 
