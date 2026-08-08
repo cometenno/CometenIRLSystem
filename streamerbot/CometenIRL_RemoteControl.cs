@@ -26,13 +26,11 @@ public class CPHInline
 
         if (string.IsNullOrWhiteSpace(action))
         {
-            // For Streamer.bot command triggers, input0 is normally the first value after the command.
-            // Prefer it over rawInput so "!volum 30" reliably resolves to "30".
             string input = FirstArg("input0", "rawInput", "command", "message");
             if (!TryParseCommand(input, out action, out value))
             {
                 CPH.LogError("CometenIRL Remote: Could not parse remote command: " + input);
-                SendChat("IRL: bruk !volum 0-100.");
+                SendChat("IRL: ugyldig remote-kommando.");
                 return false;
             }
         }
@@ -113,7 +111,6 @@ public class CPHInline
         resultMessage = string.Empty;
         string endpoint = relayBaseUrl.TrimEnd('/') + "/control_result.php?id=" + Uri.EscapeDataString(eventId);
 
-        // Receiver polls every ~0.75s. Five seconds gives room for relay, receiver execution and acknowledgement.
         for (int attempt = 0; attempt < 20; attempt++)
         {
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, endpoint))
@@ -190,7 +187,12 @@ public class CPHInline
             return true;
         }
 
-        // Accept: 30, !vol30, !vol 30, !volum30 and !volum 30.
+        if (text == "!alerttest" || text == "alerttest")
+        {
+            action = "alert_test";
+            return true;
+        }
+
         Match match = Regex.Match(text, @"^!?vol(?:um)?\s*(\d{1,3})$");
         if (!match.Success)
         {
@@ -217,6 +219,7 @@ public class CPHInline
             case "mute":
             case "unmute":
             case "status":
+            case "alert_test":
                 value = 0;
                 return true;
             default:
