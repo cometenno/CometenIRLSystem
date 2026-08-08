@@ -6,16 +6,20 @@ Remote Control er en del av samme CometenIRLAlerts-kjede som vanlige IRL-varsler
 Twitch chat -> Streamer.bot -> HTTPS relay -> BELABOX receiver -> PipeWire/WPS200
 ```
 
-## Første funksjoner
+## Kommandoer
 
-- `!vol75` - sett BELABOX-lyd til 75 %
-- `!vol 75` - samme, dersom du bruker en vanlig `!vol`-kommando med input
-- `!volup` - +5 %
-- `!voldown` - -5 %
+- `!volum 0-100` - sett BELABOX-lyd til ønsket prosent
 - `!mute` - mute
 - `!unmute` - unmute
 
-Volumkommandoene bruker `wpctl` mot `@DEFAULT_AUDIO_SINK@` som standard. Dette gjør at vi ikke hardkoder en dynamisk PipeWire sink-ID.
+Eksempler:
+
+```text
+!volum 25
+!volum 50
+!volum 75
+!volum 100
+```
 
 ## Sikkerhet
 
@@ -25,10 +29,10 @@ Control-events får kun 15 sekunders TTL på relayen, slik at gamle volum/mute-k
 
 ## Streamer.bot
 
-Lag en action:
+Lag/bruk actionen:
 
 ```text
-Cometen IRL Remote Control - Send
+CometenIRL_RemoteControl
 ```
 
 Legg inn `Execute C# Code` med hele innholdet i:
@@ -44,64 +48,87 @@ CometenIRL_RelayUrl
 CometenIRL_SenderToken
 ```
 
-### Enkelt oppsett med faste kommandoer
+### Dynamisk `!volum 0-100`
 
-For `!vol75`:
-
-1. Lag command `!vol75`.
-2. Sett permissions til Broadcaster + Moderators.
-3. Før C#-actionen settes:
-   - `controlAction = volume_set`
-   - `controlValue = 75`
-4. Kjør `Cometen IRL Remote Control - Send`.
-
-Samme metode kan brukes for `!vol25`, `!vol50`, `!vol100` osv.
-
-For de andre kommandoene settes bare `controlAction`:
+Lag én command:
 
 ```text
-!volup    -> volume_up
-!voldown  -> volume_down
-!mute     -> mute
-!unmute   -> unmute
+!volum
 ```
 
-### Dynamisk `!vol 75`
+Commanden skal trigge `CometenIRL_RemoteControl` direkte. C#-senderen foretrekker Streamer.bot-argumentet `input0`, og faller tilbake til `rawInput`. Den godtar både bare tallet og full kommandoform dersom Streamer.bot leverer det slik.
 
-Hvis C#-actionen får `rawInput` fra en Streamer.bot command-trigger, kan den også tolke et tall fra 0 til 100 direkte. Den forstår både `75`, `!vol75` og `!vol 75`.
+Gyldige former:
+
+```text
+30
+!vol30
+!vol 30
+!volum30
+!volum 30
+```
+
+Verdier under 0 eller over 100 avvises.
+
+### Mute / unmute
+
+For `!mute`:
+
+```text
+controlAction = mute
+```
+
+For `!unmute`:
+
+```text
+controlAction = unmute
+```
+
+Begge kjører samme `CometenIRL_RemoteControl`-sender.
 
 ## BELABOX receiver
 
 Receiveren behandler `type=control` separat fra lyd-alerts. Control-events spiller derfor ikke `test.wav`.
+
+Receiveren finner WPS200 dynamisk i PipeWire ved å matche `Audio/Sink` mot navnet `WPS200`, slik at dynamisk PipeWire node-ID etter reboot ikke trenger å hardkodes.
 
 Standardinnstillinger er:
 
 ```json
 {
   "remote_control_enabled": true,
-  "remote_audio_sink": "@DEFAULT_AUDIO_SINK@",
+  "remote_audio_sink": "auto",
+  "remote_audio_sink_match": "WPS200",
   "remote_volume_step_percent": 5,
   "remote_volume_max_percent": 100
 }
 ```
 
-Disse feltene er valgfrie. Hvis de mangler i eksisterende `config.json`, brukes verdiene over automatisk.
+Disse feltene er valgfrie. Hvis de mangler i eksisterende `config.json`, brukes standardverdiene automatisk.
 
 ## Test
 
-Etter oppdatering på BELABOX:
+På BELABOX:
 
 ```bash
-systemctl --user restart cometen-irl-alerts.service
-journalctl --user -u cometen-irl-alerts.service -f
+sudo journalctl _SYSTEMD_USER_UNIT=cometen-irl-alerts.service -f
 ```
 
-Send så `!vol75` fra en konto med riktig permission. Forventet receiver-logg:
+Send så:
 
 ```text
-Remote control: volume set to 75%
+!volum 30
 ```
+
+Forventet receiver-logg:
+
+```text
+Remote control: resolved audio sink WPS200 as PipeWire node <ID>
+Remote control: volume set to 30%
+```
+
+`!mute` og `!unmute` skal tilsvarende logge `muted` og `unmuted`.
 
 ## Status-retur
 
-`!irlstatus` med retur tilbake til Streamer.bot/chat er planlagt som neste steg. Det trenger en liten retur/statuskanal på relayen og er ikke aktivert i denne første Remote Control-builden.
+Retur/status tilbake til Streamer.bot/chat er ikke aktivert i denne Remote Control-builden ennå.
