@@ -13,7 +13,7 @@ Twitch chat -> Streamer.bot -> HTTPS relay -> BELABOX receiver -> PipeWire/WPS20
 - `!volum 0-100` - sett BELABOX-lyd til ønsket prosent
 - `!mute` - mute
 - `!unmute` - unmute
-- `!irlstatus` - be BELABOX bekrefte at receiver og WPS200-lydsink er tilgjengelig
+- `!irlstatus` - hent status direkte fra BELABOX
 
 Eksempler:
 
@@ -34,7 +34,7 @@ Eksempler på svar:
 IRL: volum satt til 30%
 IRL: WPS200 muted
 IRL: WPS200 unmuted
-IRL status: BELABOX online | WPS200 tilkoblet | Audio OK (node 32)
+IRL status: BELABOX online | WPS200 OK | Audio node 36 | WiFi CometenIRL_5G | Uptime 2t 14m
 ```
 
 Hvis BELABOX ikke kvitterer innen tidsgrensen:
@@ -155,6 +155,16 @@ Koble kommandoen:
 
 til denne actionen.
 
+Statusen hentes direkte på BELABOX og inkluderer:
+
+- BELABOX online
+- WPS200 funnet som aktiv PipeWire Audio/Sink
+- dynamisk PipeWire node-ID
+- aktiv WiFi-tilkobling/SSID via NetworkManager
+- system-uptime fra `/proc/uptime`
+
+Hvis `nmcli` ikke kan leses, vises `WiFi ?`. Hvis ingen WiFi-enhet er tilkoblet, vises `WiFi offline`.
+
 ## BELABOX receiver
 
 Receiveren behandler `type=control` separat fra lyd-alerts. Control-events spiller derfor ikke `test.wav`.
@@ -218,9 +228,9 @@ Test deretter:
 Forventet chat-svar:
 
 ```text
-IRL status: BELABOX online | WPS200 tilkoblet | Audio OK (node <ID>)
+IRL status: BELABOX online | WPS200 OK | Audio node <ID> | WiFi <SSID> | Uptime <tid>
 ```
 
 ## Status
 
-v0.4 retur/status er implementert og klar for praktisk test i komplett kjede.
+v0.4.1 utvider `!irlstatus` med WiFi og uptime. Resten av remote-control-kjeden er uendret.
