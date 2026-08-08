@@ -295,6 +295,17 @@ def run_wpctl(*arguments: str) -> str:
     return completed.stdout.strip()
 
 
+def current_volume_percent(sink: str) -> int:
+    output = run_wpctl("get-volume", sink)
+    for token in output.replace(":", " ").split():
+        try:
+            value = float(token)
+        except ValueError:
+            continue
+        return max(0, int(round(value * 100)))
+    raise RuntimeError(f"Could not parse wpctl volume output: {output}")
+
+
 def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
     if not bool(config.get("remote_control_enabled", True)):
         raise RuntimeError("IRL remote control is disabled in config")
@@ -314,13 +325,17 @@ def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
         return
 
     if action == "volume_up":
-        run_wpctl("set-volume", sink, f"{step}%+")
-        LOG.info("Remote control: volume increased by %s%%", step)
+        current = current_volume_percent(sink)
+        value = min(max_volume, current + step)
+        run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
+        LOG.info("Remote control: volume increased to %s%%", value)
         return
 
     if action == "volume_down":
-        run_wpctl("set-volume", sink, f"{step}%-")
-        LOG.info("Remote control: volume decreased by %s%%", step)
+        current = current_volume_percent(sink)
+        value = max(0, current - step)
+        run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
+        LOG.info("Remote control: volume decreased to %s%%", value)
         return
 
     if action == "mute":
