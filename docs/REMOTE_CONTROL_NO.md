@@ -14,6 +14,7 @@ Twitch chat -> Streamer.bot -> HTTPS relay -> BELABOX receiver -> PipeWire/WPS20
 - `!mute` - mute
 - `!unmute` - unmute
 - `!irlstatus` - hent status direkte fra BELABOX
+- `!alerttest` - spill lokal `test.wav` på BELABOX og returner bekreftet resultat til Twitch
 
 Eksempler:
 
@@ -22,6 +23,7 @@ Eksempler:
 !mute
 !unmute
 !irlstatus
+!alerttest
 ```
 
 ## Bekreftet retur til Twitch
@@ -35,6 +37,7 @@ IRL: volum satt til 30%
 IRL: WPS200 muted
 IRL: WPS200 unmuted
 IRL status: BELABOX online | WPS200 OK | Audio node 36 | WiFi CometenIRL_5G | Uptime 2t 14m
+IRL: test-alert spilt av på WPS200
 ```
 
 Hvis BELABOX ikke kvitterer innen tidsgrensen:
@@ -64,7 +67,7 @@ Ingen ny databasetabell er nødvendig. Resultatet lagres kortvarig på den samme
 
 Sett command permissions i Streamer.bot til **Broadcaster + Moderators**. Relayen krever fortsatt `CometenIRL_SenderToken`, og BELABOX mottar kun et hardkodet sett med tillatte control-actions. Ingen vilkårlige shell-kommandoer kan sendes gjennom denne funksjonen.
 
-Control-events får kun 15 sekunders TTL på relayen, slik at gamle volum/mute/status-kommandoer ikke blir kjørt lenge etter at de ble sendt.
+Control-events får kun 15 sekunders TTL på relayen, slik at gamle volum/mute/status/test-kommandoer ikke blir kjørt lenge etter at de ble sendt.
 
 ## Streamer.bot
 
@@ -165,9 +168,45 @@ Statusen hentes direkte på BELABOX og inkluderer:
 
 Hvis `nmcli` ikke kan leses, vises `WiFi ?`. Hvis ingen WiFi-enhet er tilkoblet, vises `WiFi offline`.
 
+### Alert-test
+
+Lag en action, for eksempel:
+
+```text
+IRL - Alert Test
+```
+
+Sett:
+
+```text
+controlAction = alert_test
+```
+
+og kjør deretter:
+
+```text
+CometenIRL_RemoteControl
+```
+
+Koble kommandoen:
+
+```text
+!alerttest
+```
+
+til denne actionen.
+
+BELABOX sjekker først at WPS200 finnes som PipeWire Audio/Sink, spiller deretter lokal `test.wav` via den samme avspillingsfunksjonen som vanlige alerts, og returnerer først suksess når avspillingskommandoen er fullført uten feil.
+
+Forventet Twitch-svar:
+
+```text
+IRL: test-alert spilt av på WPS200
+```
+
 ## BELABOX receiver
 
-Receiveren behandler `type=control` separat fra lyd-alerts. Control-events spiller derfor ikke `test.wav`.
+Receiveren behandler `type=control` separat fra lyd-alerts. Vanlige control-events spiller ikke lyd. `alert_test` er det eksplisitte unntaket og bruker lokal testlyd.
 
 Receiveren finner WPS200 dynamisk i PipeWire ved å matche `Audio/Sink` mot navnet `WPS200`, slik at dynamisk PipeWire node-ID etter reboot ikke trenger å hardkodes.
 
@@ -186,7 +225,8 @@ Standardinnstillinger er:
   "remote_audio_sink": "auto",
   "remote_audio_sink_match": "WPS200",
   "remote_volume_step_percent": 5,
-  "remote_volume_max_percent": 100
+  "remote_volume_max_percent": 100,
+  "remote_test_sound": "test.wav"
 }
 ```
 
@@ -200,37 +240,22 @@ På BELABOX:
 sudo journalctl _SYSTEMD_USER_UNIT=cometen-irl-alerts.service -f
 ```
 
-Send så:
+Send:
 
 ```text
 !volum 30
+!irlstatus
+!alerttest
 ```
 
-Forventet receiver-logg:
-
-```text
-Remote control: resolved audio sink WPS200 as PipeWire node <ID>
-Remote control: volume set to 30%
-```
-
-Twitch-chatten skal få:
+Forventede svar i Twitch:
 
 ```text
 IRL: volum satt til 30%
-```
-
-Test deretter:
-
-```text
-!irlstatus
-```
-
-Forventet chat-svar:
-
-```text
 IRL status: BELABOX online | WPS200 OK | Audio node <ID> | WiFi <SSID> | Uptime <tid>
+IRL: test-alert spilt av på WPS200
 ```
 
 ## Status
 
-v0.4.1 utvider `!irlstatus` med WiFi og uptime. Resten av remote-control-kjeden er uendret.
+v0.4.2 legger til bekreftet `!alerttest`. Status, volum, mute/unmute og returkanalen er ellers uendret.
