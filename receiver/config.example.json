@@ -29,5 +29,9 @@
   "audio_keepalive_enabled": true,
   "audio_keepalive_command": "pw-cat --playback --rate=48000 --channels=2 --format=s16 -",
   "audio_keepalive_input": "/dev/zero",
-  "audio_keepalive_restart_seconds": 5
+  "audio_keepalive_restart_seconds": 5,
+  "remote_control_enabled": true,
+  "remote_audio_sink": "@DEFAULT_AUDIO_SINK@",
+  "remote_volume_step_percent": 5,
+  "remote_volume_max_percent": 100
 }
