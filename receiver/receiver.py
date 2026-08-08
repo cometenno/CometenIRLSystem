@@ -47,7 +47,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.3.1",
+        "User-Agent": "CometenIRLAlerts/0.4.0",
     }
 
     if payload is not None:
@@ -332,7 +332,7 @@ def resolve_audio_sink(config: dict[str, Any]) -> str:
     raise RuntimeError(f"Could not find Audio/Sink matching '{match_text}'")
 
 
-def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
+def handle_control(config: dict[str, Any], event: dict[str, Any]) -> str:
     if not bool(config.get("remote_control_enabled", True)):
         raise RuntimeError("IRL remote control is disabled in config")
 
@@ -340,33 +340,38 @@ def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
     value = int(event.get("amount", 0) or 0)
     step = max(1, min(25, int(config.get("remote_volume_step_percent", 5))))
     max_volume = max(1, min(100, int(config.get("remote_volume_max_percent", 100))))
+    match_text = str(config.get("remote_audio_sink_match", "WPS200")).strip() or "WPS200"
     sink = resolve_audio_sink(config)
 
     if action == "volume_set":
         value = max(0, min(max_volume, value))
         run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
         LOG.info("Remote control: volume set to %s%%", value)
-        return
+        return f"IRL: volum satt til {value}%"
 
     if action == "volume_up":
         run_wpctl("set-volume", sink, f"{step}%+")
         LOG.info("Remote control: volume increased by %s%%", step)
-        return
+        return f"IRL: volum økt med {step}%"
 
     if action == "volume_down":
         run_wpctl("set-volume", sink, f"{step}%-")
         LOG.info("Remote control: volume decreased by %s%%", step)
-        return
+        return f"IRL: volum senket med {step}%"
 
     if action == "mute":
         run_wpctl("set-mute", sink, "1")
         LOG.info("Remote control: muted")
-        return
+        return f"IRL: {match_text} muted"
 
     if action == "unmute":
         run_wpctl("set-mute", sink, "0")
         LOG.info("Remote control: unmuted")
-        return
+        return f"IRL: {match_text} unmuted"
+
+    if action == "status":
+        LOG.info("Remote control: status requested; audio sink %s is node %s", match_text, sink)
+        return f"IRL status: BELABOX online | {match_text} tilkoblet | Audio OK (node {sink})"
 
     raise ValueError(f"Unsupported remote control action: {action or '<empty>'}")
 
@@ -390,6 +395,30 @@ def acknowledge(
 
     if not response.get("ok"):
         raise RuntimeError(f"Relay rejected acknowledgement: {response}")
+
+
+def post_control_result(
+    base_url: str,
+    token: str,
+    timeout: float,
+    event: dict[str, Any],
+    ok: bool,
+    message: str,
+) -> None:
+    response = request_json(
+        "POST",
+        f"{base_url}/control_result.php",
+        token,
+        timeout,
+        {
+            "id": str(event.get("id", "")),
+            "ok": bool(ok),
+            "message": str(message)[:220],
+        },
+    )
+
+    if not response.get("ok"):
+        raise RuntimeError(f"Relay rejected control result: {response}")
 
 
 def run(config_path: Path) -> None:
@@ -430,19 +459,40 @@ def run(config_path: Path) -> None:
                     if not isinstance(event, dict):
                         continue
 
+                    event_type = str(event.get("type", "")).strip().lower()
+                    control_result_ok = False
+                    control_result_message = ""
+
                     try:
-                        event_type = str(event.get("type", "")).strip().lower()
                         if event_type == "control":
-                            handle_control(config, event)
+                            control_result_message = handle_control(config, event)
+                            control_result_ok = True
                         else:
                             play_event(config, event, config_dir)
-                    except Exception:
+                    except Exception as exception:
                         LOG.exception("Event handling failed for event %s", event.get("id", ""))
-                    finally:
+                        if event_type == "control":
+                            control_result_message = f"IRL feil: {exception}"
+
+                    acknowledged = False
+                    try:
+                        acknowledge(base_url, token, timeout, event)
+                        acknowledged = True
+                    except Exception:
+                        LOG.exception("Could not acknowledge event %s", event.get("id", ""))
+
+                    if event_type == "control" and acknowledged:
                         try:
-                            acknowledge(base_url, token, timeout, event)
+                            post_control_result(
+                                base_url,
+                                token,
+                                timeout,
+                                event,
+                                control_result_ok,
+                                control_result_message or "IRL feil: ukjent kontrollfeil",
+                            )
                         except Exception:
-                            LOG.exception("Could not acknowledge event %s", event.get("id", ""))
+                            LOG.exception("Could not post control result for event %s", event.get("id", ""))
 
                 backoff = interval
                 if not events:
