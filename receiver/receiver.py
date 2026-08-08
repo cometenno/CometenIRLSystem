@@ -47,7 +47,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.4.1",
+        "User-Agent": "CometenIRLAlerts/0.4.2",
     }
 
     if payload is not None:
@@ -378,7 +378,7 @@ def current_wifi_status() -> str:
     return "WiFi offline"
 
 
-def handle_control(config: dict[str, Any], event: dict[str, Any]) -> str:
+def handle_control(config: dict[str, Any], event: dict[str, Any], config_dir: Path) -> str:
     if not bool(config.get("remote_control_enabled", True)):
         raise RuntimeError("IRL remote control is disabled in config")
 
@@ -429,6 +429,17 @@ def handle_control(config: dict[str, Any], event: dict[str, Any]) -> str:
             f"IRL status: BELABOX online | {match_text} OK | Audio node {sink} | "
             f"{wifi} | Uptime {uptime}"
         )
+
+    if action == "alert_test":
+        test_event = {
+            "id": str(event.get("id", "")),
+            "type": "test",
+            "user": str(event.get("user", "")),
+            "sound": os.path.basename(str(config.get("remote_test_sound", "test.wav"))),
+        }
+        play_event(config, test_event, config_dir)
+        LOG.info("Remote control: alert test played through %s node %s", match_text, sink)
+        return f"IRL: test-alert spilt av på {match_text}"
 
     raise ValueError(f"Unsupported remote control action: {action or '<empty>'}")
 
@@ -522,7 +533,7 @@ def run(config_path: Path) -> None:
 
                     try:
                         if event_type == "control":
-                            control_result_message = handle_control(config, event)
+                            control_result_message = handle_control(config, event, config_dir)
                             control_result_ok = True
                         else:
                             play_event(config, event, config_dir)
