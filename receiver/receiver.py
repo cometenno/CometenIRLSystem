@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -46,7 +47,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.3",
+        "User-Agent": "CometenIRLAlerts/0.3.1",
     }
 
     if payload is not None:
@@ -295,15 +296,40 @@ def run_wpctl(*arguments: str) -> str:
     return completed.stdout.strip()
 
 
-def current_volume_percent(sink: str) -> int:
-    output = run_wpctl("get-volume", sink)
-    for token in output.replace(":", " ").split():
-        try:
-            value = float(token)
-        except ValueError:
+def resolve_audio_sink(config: dict[str, Any]) -> str:
+    configured = str(config.get("remote_audio_sink", "auto")).strip()
+    if configured and configured.lower() not in {"auto", "@default_audio_sink@"}:
+        return configured
+
+    match_text = str(config.get("remote_audio_sink_match", "WPS200")).strip() or "WPS200"
+    executable = shutil.which("pw-cli")
+    if executable is None:
+        raise RuntimeError("pw-cli was not found; cannot discover the Bluetooth audio sink")
+
+    completed = subprocess.run(
+        [executable, "ls", "Node"],
+        check=True,
+        timeout=10,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    output = completed.stdout
+    blocks = re.split(r"(?=^\s*id\s+\d+,\s+type\s+PipeWire:Interface:Node/3\s*$)", output, flags=re.MULTILINE)
+
+    for block in blocks:
+        if 'media.class = "Audio/Sink"' not in block:
             continue
-        return max(0, int(round(value * 100)))
-    raise RuntimeError(f"Could not parse wpctl volume output: {output}")
+        if match_text.lower() not in block.lower():
+            continue
+        match = re.search(r"^\s*id\s+(\d+),", block, flags=re.MULTILINE)
+        if match:
+            sink_id = match.group(1)
+            LOG.info("Remote control: resolved audio sink %s as PipeWire node %s", match_text, sink_id)
+            return sink_id
+
+    raise RuntimeError(f"Could not find Audio/Sink matching '{match_text}'")
 
 
 def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
@@ -314,9 +340,7 @@ def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
     value = int(event.get("amount", 0) or 0)
     step = max(1, min(25, int(config.get("remote_volume_step_percent", 5))))
     max_volume = max(1, min(100, int(config.get("remote_volume_max_percent", 100))))
-    sink = str(config.get("remote_audio_sink", "@DEFAULT_AUDIO_SINK@")).strip()
-    if not sink:
-        sink = "@DEFAULT_AUDIO_SINK@"
+    sink = resolve_audio_sink(config)
 
     if action == "volume_set":
         value = max(0, min(max_volume, value))
@@ -325,17 +349,13 @@ def handle_control(config: dict[str, Any], event: dict[str, Any]) -> None:
         return
 
     if action == "volume_up":
-        current = current_volume_percent(sink)
-        value = min(max_volume, current + step)
-        run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
-        LOG.info("Remote control: volume increased to %s%%", value)
+        run_wpctl("set-volume", sink, f"{step}%+")
+        LOG.info("Remote control: volume increased by %s%%", step)
         return
 
     if action == "volume_down":
-        current = current_volume_percent(sink)
-        value = max(0, current - step)
-        run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
-        LOG.info("Remote control: volume decreased to %s%%", value)
+        run_wpctl("set-volume", sink, f"{step}%-")
+        LOG.info("Remote control: volume decreased by %s%%", step)
         return
 
     if action == "mute":
