@@ -30,6 +30,12 @@ if (preg_match('/^[A-Za-z0-9_-]+\.wav$/', $sound) !== 1) {
 }
 
 $ttl = max(15, min(600, (int)($config['event_ttl_seconds'] ?? 90)));
+if ($type === 'control') {
+    // Remote commands should expire quickly so stale volume/mute actions
+    // are not executed long after the user sent them.
+    $ttl = min($ttl, 15);
+}
+
 $createdAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
 $expiresAt = $createdAt->modify('+' . $ttl . ' seconds');
 
