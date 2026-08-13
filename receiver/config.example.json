@@ -34,5 +34,23 @@
   "remote_audio_sink": "auto",
   "remote_audio_sink_match": "WPS200",
   "remote_volume_step_percent": 5,
-  "remote_volume_max_percent": 100
+  "remote_volume_max_percent": 100,
+  "remote_test_sound": "test.wav",
+  "status_leds_enabled": false,
+  "status_leds": {
+    "green_line": "PIN_32",
+    "blue_line": "PIN_36",
+    "yellow_line": "PIN_38",
+    "red_line": "PIN_40",
+    "active_high": true,
+    "poll_seconds": 2.0,
+    "lamp_test": true,
+    "lamp_test_seconds": 0.3,
+    "bluetooth_sink_match": "WPS200",
+    "bluetooth_watchdog_service": "cometen-wps200.service",
+    "camera_status_url": "http://127.0.0.1/stat",
+    "camera_app": "publish",
+    "camera_stream": "live",
+    "live_process": "belacoder"
+  }
 }
