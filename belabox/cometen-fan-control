@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TEMP_FILE=/sys/class/thermal/thermal_zone0/temp
+COOLING_DIR=/sys/class/thermal/cooling_device0
+STATE_FILE="$COOLING_DIR/cur_state"
+MAX_STATE_FILE="$COOLING_DIR/max_state"
+POLICY_FILE=/sys/class/thermal/thermal_zone0/policy
+
+# Keep the existing BELABOX fan curve, but add hysteresis between OFF and state 1.
+# OFF -> 1 at 43 C. Once running, state 1 stays active until temperature drops below 40 C.
+# Higher fan steps remain unchanged: 50/57/65 C.
+
+if [[ -w "$POLICY_FILE" ]]; then
+    echo user_space > "$POLICY_FILE" || true
+fi
+
+while true; do
+    raw_temp=$(cat "$TEMP_FILE")
+    temp_c=$((raw_temp / 1000))
+    current_state=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+    max_state=$(cat "$MAX_STATE_FILE" 2>/dev/null || echo 4)
+
+    if (( temp_c >= 65 )); then
+        wanted_state=4
+    elif (( temp_c >= 57 )); then
+        wanted_state=3
+    elif (( temp_c >= 50 )); then
+        wanted_state=2
+    elif (( temp_c >= 43 )); then
+        wanted_state=1
+    elif (( temp_c < 40 )); then
+        wanted_state=0
+    else
+        # 40-42 C is the hysteresis band. Do not start a stopped fan here,
+        # but do not stop a fan that is already running either.
+        if (( current_state > 0 )); then
+            wanted_state=1
+        else
+            wanted_state=0
+        fi
+    fi
+
+    if (( wanted_state > max_state )); then
+        wanted_state=$max_state
+    fi
+
+    if [[ "$wanted_state" != "$current_state" ]]; then
+        echo "$wanted_state" > "$STATE_FILE"
+        logger -t cometen-fan "temp=${temp_c}C state ${current_state}->${wanted_state}"
+    fi
+
+    sleep 2
+done
