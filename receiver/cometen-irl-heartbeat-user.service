@@ -1,0 +1,15 @@
+[Unit]
+Description=Cometen IRL BELABOX Heartbeat
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RECEIVER_DIR@
+ExecStart=/usr/bin/python3 @RECEIVER_DIR@/heartbeat.py @RECEIVER_DIR@/config.json
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
