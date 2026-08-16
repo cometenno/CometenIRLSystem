@@ -8,11 +8,15 @@ Hovedfil:
 streamerbot/CometenIRL_AdminControl.cs
 ```
 
+Gjeldende testede admin-kode er **v1.3**.
+
 Ending-helper:
 
 ```text
 streamerbot/CometenIRL_EndAutoStop.cs
 ```
+
+Gjeldende helper er **v1.1**.
 
 Admin-kontrollen går direkte mot OBS/Twitch i Streamer.bot. Den går ikke gjennom BELABOX-relayen.
 
@@ -38,17 +42,20 @@ Alle kommandoene over peker til samme action:
 CometenIRL_AdminControl
 ```
 
-`CometenIRL_EndAutoStop` er kun en intern helper og skal ikke ha chat-trigger.
+`CometenIRL_EndAutoStop` er kun intern helper og skal ikke ha chat-trigger.
 
 ## Normal IRL-flyt
 
 ```text
 !irlstart
+  -> CometenIRL_IrlMode = true
   -> watchdog av
   -> IRL - STARTING SOON
+  -> IRL Channel Points-modus dersom automatikk er aktiv
   -> start OBS-stream
 
 !irlgo
+  -> CometenIRL_IrlMode = true
   -> BELABOX SRT
   -> watchdog på
 
@@ -57,24 +64,28 @@ CometenIRL_AdminControl
   -> IRL - BRB
 
 !irlback
+  -> CometenIRL_IrlMode = true
   -> BELABOX SRT
   -> watchdog på
 
 !irlend
   -> watchdog av
   -> IRL - ENDING
-  -> credits/ending får gå i 25 sekunder som standard
+  -> CometenIRL_IrlMode holdes true mens Ending pågår
+  -> credits/ending går i 25 sekunder som standard
   -> OBS stopper automatisk
+  -> NORMAL Channel Points-modus gjenopprettes
+  -> CometenIRL_IrlMode = false
 
 !irlstop
   -> umiddelbar manuell stopp
+  -> NORMAL Channel Points-modus gjenopprettes
+  -> CometenIRL_IrlMode = false
 ```
 
-`!irlstop` beholdes som nød/manuell stopp selv om vanlig avslutning nå skal gjøres med `!irlend`.
+`!irlstop` beholdes som nød/manuell stopp selv om vanlig avslutning gjøres med `!irlend`.
 
 ## Automatisk Ending
-
-`!irlend` krever ikke lenger en ekstra `!irlstop`.
 
 Standard:
 
@@ -82,17 +93,15 @@ Standard:
 CometenIRL_EndingSeconds = 25
 ```
 
-Verdien er valgfri og clamped til 5-120 sekunder. Hvis globalen mangler brukes 25 sekunder.
+Verdien clamped til 5-120 sekunder. Manglende, 0 eller negativ verdi behandles som standard 25 sekunder.
 
-Ending-helperen kjøres med:
+Ending-helperen kjøres asynkront med:
 
 ```text
 CPH.RunAction("CometenIRL_EndAutoStop", false)
 ```
 
-slik at admin-actionen kan returnere umiddelbart.
-
-### Viktig queue-oppsett
+### Queue-oppsett
 
 Lag action:
 
@@ -102,26 +111,28 @@ CometenIRL_EndAutoStop
 
 med hele `streamerbot/CometenIRL_EndAutoStop.cs`.
 
-Sett denne actionen på en **egen Streamer.bot queue**, for eksempel:
+Sett helperen på en egen Streamer.bot queue, for eksempel:
 
 ```text
 IRL END
 ```
 
-Ikke bruk samme queue som `IRLAlertsController`/watchdog. Helperen venter i opptil 25 sekunder og skal derfor ikke blokkere watchdog-køen.
+Ikke bruk samme queue som `IRLAlertsController`/watchdog.
 
-### Avbryte Ending
+### Ending-sikkerhet
 
-Hvis en ny IRL-livssykluskommando brukes før tiden går ut, annulleres pending auto-stop. Eksempel:
+Helper v1.1 stopper bare når:
 
-```text
-!irlend
-!irlback
-```
+- `CometenIRL_EndPending` fortsatt er true
+- `CometenIRL_EndSequence` fortsatt er samme sekvens
+- OBS fortsatt er koblet til
+- aktiv scene fortsatt er `IRL - ENDING`
 
-Da skal streamen fortsette og watchdog armeres igjen.
+Helperen er ikke lenger avhengig av `CometenIRL_IrlMode` som precondition.
 
-Helperen sjekker også at OBS fortsatt står på `IRL - ENDING` før den stopper streamen. Hvis scenen er endret manuelt, avbrytes auto-stop.
+OBS sin separate `Tools -> Output Timer` ble funnet aktiv med 30 sekunder under feilsøking. Dette var uavhengig av Cometen IRL Alerts og ble deaktivert.
+
+**Avbrytelse av Ending med `!irlend` etterfulgt av `!irlback` skal støttes av koden, men denne kombinasjonen er ikke markert som endelig retestet etter v1.3/v1.1.**
 
 ## Språk - persistent NO/EN
 
@@ -138,11 +149,7 @@ no
 en
 ```
 
-Default når globalen mangler:
-
-```text
-no
-```
+Default er `no`.
 
 Bytt manuelt med:
 
@@ -151,9 +158,7 @@ Bytt manuelt med:
 !irllang en
 ```
 
-Språket **endres aldri automatisk** ved start, stopp, restart eller scenebytte. Når engelsk er satt, forblir systemet engelsk til `!irllang no` brukes, og motsatt.
-
-`!irllang` uten parameter viser aktivt språk.
+Språket endres aldri automatisk ved start, stopp, restart eller scenebytte.
 
 Samme global leses av:
 
@@ -162,8 +167,6 @@ CometenIRL_AdminControl
 CometenIRL_RemoteControl
 CometenIRL_EndAutoStop
 ```
-
-Dermed følger admin-responser, status, volum, mute/unmute og alert-test samme valgte språk.
 
 ## Watchdog armed-state
 
@@ -178,27 +181,15 @@ true  = watchdog kan styre fallback/recovery
 false = telemetry oppdateres, men watchdog får ikke bytte scene
 ```
 
-`IRLAlertsController v10` bruker denne separat fra:
+`IRLAlertsController v10` bruker denne separat fra `CometenIRL_WatchdogLiveOnly`.
 
-```text
-CometenIRL_WatchdogLiveOnly
-```
-
-Starting Soon, BRB og Ending disarmer watchdog. `!irlgo` og `!irlback` armer den igjen.
+Starting Soon, BRB og Ending disarmer watchdog. `!irlgo`, `!irlback` og `!irlscene srt/live/go` armer den igjen.
 
 ## Scene-aliaser
 
 ```text
-!irlscene soon
-!irlscene srt
-!irlscene brb
-!irlscene end
-!irlscene signal
-```
-
-```text
 soon   -> IRL - STARTING SOON, watchdog av
-srt    -> BELABOX SRT, watchdog på
+srt    -> BELABOX SRT, IrlMode true, watchdog på
 brb    -> IRL - BRB, watchdog av
 end    -> IRL - ENDING + automatisk stopp
 signal -> IRL - SIGNAL MISTET, watchdog av
@@ -214,22 +205,20 @@ CometenIRL_BrbScene           = IRL - BRB
 CometenIRL_EndingScene        = IRL - ENDING
 ```
 
-Hvis de mangler, brukes verdiene over.
-
 ## Channel Points
 
-Automatisk reward-bytte finnes, men er avslått til reward-gruppene er ferdige:
+Persisted globals:
 
 ```text
-CometenIRL_ManageRewards = false
+CometenIRL_ManageRewards
+CometenIRL_NormalRewardGroup = NORMAL
+CometenIRL_IrlRewardGroup = IRL
 ```
 
-Når klart:
+På ferdig konfigurert installasjon:
 
 ```text
 CometenIRL_ManageRewards = true
-CometenIRL_NormalRewardGroup = NORMAL
-CometenIRL_IrlRewardGroup = IRL
 ```
 
 IRL-modus:
@@ -253,6 +242,26 @@ Manuell override:
 !irlpoints off
 ```
 
+Rewards som skal fungere i begge modi kan stå utenfor disse gruppene.
+
+## Setup-action
+
+Felles installasjonsaction:
+
+```text
+CometenIRL_Setup
+```
+
+Kilde:
+
+```text
+streamerbot/CometenIRL_Setup.cs
+```
+
+Setup v1.0 oppretter manglende persisted globals med standardverdier og beholder eksisterende verdier. `CometenIRL_SetupVersion` brukes som setup-versjon.
+
+På fersk installasjon er `CometenIRL_ManageRewards=false` som sikker standard til reward-gruppene er konfigurert. Sender-token og BELABOX stream-ID skal aldri hardkodes i repoet.
+
 ## Streamer.bot command mode
 
 ```text
@@ -272,16 +281,21 @@ Manuell override:
 Praktisk verifisert:
 
 - `!irlstart` - Starting Soon + OBS start fungerer
-- `!irlgo` - BELABOX SRT + watchdog armed fungerer
+- `!irlgo` - BELABOX SRT + watchdog armed fungerer og setter IrlMode true
 - `!irlbrb` - BRB + watchdog disarmed fungerer
-- `!irlback` - retur til BELABOX SRT + watchdog armed fungerer
-- v1.1 timing-fiks for OBS scene-confirmation er verifisert
-- `!irlend` - Ending-scenen vises, watchdog disarmes og OBS stopper automatisk etter ca. 25 sekunder
-- `!irlend` etterfulgt av `!irlback` - pending auto-stop kanselleres; streamen fortsetter og watchdog armeres igjen
-- `!irllang en` og `!irllang no` - persistent språkbytte fungerer
-- `!irlstatus` følger valgt språk i både EN- og NO-modus
+- `!irlback` - retur til BELABOX SRT + watchdog armed fungerer og setter IrlMode true
+- v1.1 timing-fiks for OBS scene-confirmation fungerer
+- v1.3 IrlMode-livssyklus fungerer
+- `!irlend` - Ending + auto-stop med EndAutoStop v1.1 fungerer
+- etter auto-stop blir IrlMode false
+- `!irllang en` og `!irllang no` fungerer persistent
+- `!irlstatus` følger valgt språk i EN og NO
+- `!irlpoints on` og `!irlpoints off` fungerer manuelt
+- automatisk Channel Points-bytte ved `!irlstart` og `!irlend` fungerer med `CometenIRL_ManageRewards=true`
+- `CometenIRL_Setup v1.0` er kjørt og verifisert til å beholde eksisterende globals og gjenopprette `CometenIRL_SetupVersion` når den mangler
 
 Gjenstår praktisk verifisering:
 
+- Ending-cancel-test etter endelig v1.3/v1.1 (`!irlend`, deretter `!irlback` før timeout)
 - øvrige remote-control-responser på begge språk (volum, mute/unmute og alert-test)
-- Channel Point-grupper når de er opprettet
+- komplett Streamer.bot eksport/import-pakke er planlagt, men ikke laget ennå
