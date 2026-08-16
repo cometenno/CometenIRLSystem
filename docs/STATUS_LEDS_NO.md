@@ -8,18 +8,18 @@ er deaktivert eller GPIO ikke kan åpnes.
 
 ## Hardware
 
-Bekreftet ledige GPIO-linjer på Cometen BELABOX:
+Bekreftet GPIO-oppsett på Cometen BELABOX:
 
 ```text
 PIN 32 - PIN_32 - grønn - SYSTEM / ONLINE
 PIN 34 - GND    - felles jord
 PIN 36 - PIN_36 - blå   - BLUETOOTH / WPS200
-PIN 38 - PIN_38 - gul    - CAMERA / RTMP INPUT
+PIN 38 - PIN_38 - gul    - CAMERA / INPUT
 PIN 40 - PIN_40 - rød    - LIVE / OUTPUT
 ```
 
 Disse fem fysiske pinnene ligger etter hverandre på samme rekke av 40-pin-headeren:
-`32, 34, 36, 38, 40`. Det gjør det mulig å bruke én 1x5 hunnkontakt med 2,54 mm pitch.
+`32, 34, 36, 38, 40`.
 
 Hver LED skal ha sin egen seriemotstand. Bygget er planlagt med:
 
@@ -54,22 +54,31 @@ Kort bein / flat side / katode går til felles GND.
 - sakte blink: WPS200 er ikke koblet til, men watchdog-tjenesten kjører
 - rask blink: WPS200 er borte og watchdog-tjenesten er ikke aktiv
 
-### Gul - CAMERA / RTMP INPUT
+### Gul - CAMERA / INPUT
 
-- fast lys: nginx har aktiv `publish/live`-stream
-- sakte blink: venter på kamera
-- rask blink: kamera-feed har vært aktiv og forsvant
+- fast lys: USB-kamera finnes på `/dev/usb_capture`
+- sakte blink: kamera kan ikke bekreftes ennå
+- rask blink: kamera-feed har vært aktiv og senere forsvinner
 
-Programmet prøver først nginx RTMP-statistikk via `http://127.0.0.1/stat`.
-Hvis denne URL-en ikke er tilgjengelig, brukes en fallback som ser etter en ekstern
-TCP-publisher på port 1935. Lokale `127.0.0.1`-lesere fra belacoder telles ikke som kamera.
+Fra 16. august 2026 sjekker LED-modulen USB-kameraet først. Standard device er:
+
+```text
+/dev/usb_capture
+```
+
+Hvis USB-device ikke kan bekreftes, brukes den eldre RTMP-sjekken som fallback:
+`http://127.0.0.1/stat` og deretter ekstern publisher på port 1935.
+
+Dette retter problemet der gul/rød LED blinket selv om Elgato Facecam faktisk var koblet til via USB.
 
 ### Rød - LIVE / OUTPUT
 
-- fast lys: `belacoder` kjører og kamera-input er aktiv
+- fast lys: `belacoder` kjører og kamera-input er bekreftet
 - sakte blink: `belacoder` kjører, men kamerastatus kan ikke bekreftes
 - rask blink: `belacoder` kjører mens kamera-input mangler
 - av: BELABOX encoder ikke aktiv / ikke live
+
+Rød LED viser at encoder/output er aktiv. Den er ikke Twitch/OBS-live-indikator.
 
 ## Oppstartstest
 
@@ -93,9 +102,9 @@ bash ./install-gpio-leds.sh
 ```
 
 Scriptet installerer `gpiod` og `python3-libgpiod`, og lager en `gpio`-gruppe/udev-regel
-slik at den eksisterende user-systemd-tjenesten kan bruke `/dev/gpiochip*` uten root.
+slik at user-systemd-tjenesten kan bruke `/dev/gpiochip*` uten root.
 
-Reboot én gang etter installasjonen:
+Reboot én gang etter første GPIO-installasjon:
 
 ```bash
 sudo reboot
@@ -105,7 +114,7 @@ sudo reboot
 
 Den virkelige `receiver/config.json` ligger lokalt og skal ikke legges i GitHub.
 
-Legg til:
+Relevant del:
 
 ```json
 "status_leds_enabled": true,
@@ -120,6 +129,7 @@ Legg til:
   "lamp_test_seconds": 0.3,
   "bluetooth_sink_match": "WPS200",
   "bluetooth_watchdog_service": "cometen-wps200.service",
+  "camera_device": "/dev/usb_capture",
   "camera_status_url": "http://127.0.0.1/stat",
   "camera_app": "publish",
   "camera_stream": "live",
@@ -127,9 +137,9 @@ Legg til:
 }
 ```
 
-## Test bare LED-ene
+`camera_device` er valgfri. Dersom den mangler brukes `/dev/usb_capture` som standard.
 
-Etter wiring, GPIO-installasjon og reboot:
+## Test bare LED-ene
 
 ```bash
 cd ~/CometenIRLAlerts/receiver
@@ -144,8 +154,8 @@ grønn -> blå -> gul -> rød -> alle
 
 ## Installer/oppdater brukertjenesten
 
-Service-malen bruker `run_receiver.py`, som starter LED-monitoren og den eksisterende
-`receiver.py` i samme CometenIRLAlerts-tjeneste.
+Service-malen bruker `run_receiver.py`, som starter LED-monitoren og `receiver.py` i samme
+CometenIRLAlerts-tjeneste.
 
 Etter `git pull`:
 
@@ -155,7 +165,7 @@ bash ./install-user-service.sh
 systemctl --user restart cometen-irl-alerts.service
 ```
 
-Status:
+Status og logg:
 
 ```bash
 systemctl --user status cometen-irl-alerts.service --no-pager
