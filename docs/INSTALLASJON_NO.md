@@ -469,6 +469,8 @@ Watchdog ligger under:
 streamerbot/IRLAlertsController.cs
 ```
 
+Gjeldende testgodkjente controller er **v9**.
+
 Målet er:
 
 ```text
@@ -502,17 +504,45 @@ Testmodus:
 CometenIRL_WatchdogLiveOnly = false
 ```
 
-Produksjon:
+Produksjon/live-only:
 
 ```text
 CometenIRL_WatchdogLiveOnly = true
 ```
 
+Controlleren aksepterer denne globalen både som ekte bool og som teksten `"true"` / `"false"`.
+
+## OBS-scenebytte
+
+**v9 bruker `CPH.ObsSetScene()` for både fallback og recovery.**
+
+Tidligere `ObsSendRaw("SetCurrentProgramScene", ...)` ble fjernet som sceneautoritet etter at signal-deteksjonen fungerte, men scenebyttet ikke ble utført pålitelig. En separat test-action viste at `CPH.ObsSetScene()` byttet til `IRL - SIGNAL MISTET` umiddelbart med samme OBS-tilkobling og samme scenenavn.
+
+Ikke erstatt `ObsSetScene()` med `ObsSendRaw()` uten ny eksplisitt test.
+
 ## Status per 16. august 2026
 
-Watchdog er fortsatt **test/development**. Ingestdeteksjon og fallback er bekreftet, men recovery/pending-state skal ferdigstilles før `WatchdogLiveOnly=true` regnes som produksjonsklar.
+**Fallback og recovery i v9 er testgodkjent i OBS-offline testmodus.**
 
-Ikke bruk watchdog som produksjonskritisk sceneautoritet før denne statusen er oppdatert i repoet.
+Bekreftet flere ganger:
+
+```text
+BELABOX feed PÅ
+-> BELABOX SRT
+
+Stop i BELABOX admin
+-> connected=false / bitrate=0
+-> IRL - SIGNAL MISTET
+
+Start i BELABOX admin
+-> connected=true / bitrate>0
+-> 5 stabile gode checks
+-> BELABOX SRT
+```
+
+Dermed er både signal-loss, fallback og automatisk recovery bekreftet fungerende.
+
+Før `CometenIRL_WatchdogLiveOnly=true` regnes som endelig produksjonsverifisert skal det gjøres én siste kontroll under en faktisk OBS-live-stream. Det er kun live-only-gating som gjenstår å bekrefte; scene- og signal-logikken er testgodkjent.
 
 Full dokumentasjon:
 
@@ -553,6 +583,17 @@ docs/STATUS_LEDS_NO.md
 ```
 
 Statusverdier fra controller/receiver skal gjenbrukes av LED-systemet i stedet for å lage egne konkurrerende watchdogs.
+
+Bekreftet LED-prinsipp per 16. august 2026:
+
+```text
+grønn = system/online
+blå   = Bluetooth/WPS200
+gul   = video-input finnes
+rød   = BELABOX encoder/output kjører
+```
+
+Gul og rød er dermed separate: Stop i BELABOX admin skal slå av rød, mens gul fortsatt lyser dersom videokilden fortsatt finnes.
 
 ---
 
