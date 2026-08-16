@@ -58,6 +58,8 @@ Gul viser aktiv lokal videopipeline, ikke bare at en USB-enhet er fysisk koblet 
 - rask blink: encoder kjører, men ingen videodevice er aktivt åpent - input/pipeline er mistet eller restartes
 - av: encoder/videopipeline er ikke aktiv
 
+**Bekreftet 16. august 2026:** root video-probe + LED-integrasjonen er testet på ROCK 5B+ med `/dev/usb_capture -> /dev/video1`. Med aktiv videopipeline lyser gul LED fast som tiltenkt.
+
 Kjente videoenheter:
 
 ```text
