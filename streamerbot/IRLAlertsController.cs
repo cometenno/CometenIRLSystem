@@ -11,6 +11,7 @@ using System.Text.RegularExpressions;
 //   - Remembers the scene that was active before failover
 //   - Restores that scene after the SRT input has been stable again
 //   - Does not force a restore if the operator manually changed scene
+//   - Writes temporary diagnostic lines to the Streamer.bot log
 //
 // Default OBS names:
 //   SRT Media Source: BELABOX SRT
@@ -46,6 +47,14 @@ public class CPHInline
 
     public bool Execute()
     {
+        bool obsConnected = CPH.ObsIsConnected(ObsConnection);
+        bool obsStreaming = CPH.ObsIsStreaming(ObsConnection);
+
+        CPH.LogInfo("CometenIRL TEST: tick - OBS connected="
+            + obsConnected
+            + " streaming="
+            + obsStreaming);
+
         string inputName = (CPH.GetGlobalVar<string>(VarSrtInputName, true) ?? string.Empty).Trim();
         string fallbackScene = (CPH.GetGlobalVar<string>(VarFallbackScene, true) ?? string.Empty).Trim();
 
@@ -60,7 +69,7 @@ public class CPHInline
         }
 
         // The watchdog is intentionally inactive whenever OBS is not actually live.
-        if (!CPH.ObsIsStreaming(ObsConnection))
+        if (!obsStreaming)
         {
             ResetRuntimeState();
             return true;
@@ -76,6 +85,7 @@ public class CPHInline
         }
 
         CPH.SetGlobalVar(VarLastMediaState, mediaState, true);
+        CPH.LogInfo("CometenIRL TEST: " + inputName + " mediaState=" + mediaState);
 
         int failChecks = CPH.GetGlobalVar<int>(VarFailChecks, true);
         int recoverChecks = CPH.GetGlobalVar<int>(VarRecoverChecks, true);
