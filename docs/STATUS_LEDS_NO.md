@@ -58,8 +58,8 @@ Kort bein / flat side / katode går til felles GND.
 
 Gul skal vise aktiv lokal videopipeline, ikke bare at en USB-enhet er fysisk koblet til.
 
-- fast lys: `belacoder` kjører og har et faktisk BELABOX-videodevice åpent
-- rask blink: `belacoder` kjører, men ingen videodevice er aktivt åpent - input/pipeline er mistet eller restartes
+- fast lys: `belacoder`-prosesstreet har et faktisk BELABOX-videodevice åpent
+- rask blink: `belacoder`-prosesstreet kjører, men ingen videodevice er aktivt åpent - input/pipeline er mistet eller restartes
 - av: encoder/videopipeline er ikke aktiv
 
 Modulen auto-detekterer disse BELABOX-videoenhetene:
@@ -77,9 +77,9 @@ Alle paths blir resolvet til det virkelige device-et, for eksempel:
 /dev/usb_capture -> /dev/video1
 ```
 
-Deretter kontrollerer modulen `/proc/<belacoder-pid>/fd/` for å bekrefte at GStreamer/belacoder faktisk har videodevicet åpent. LED-modulen åpner derfor aldri kameraet selv og konkurrerer ikke med BELABOX om V4L2-enheten.
+BELABOX kan legge den faktiske V4L2-handle-en i en GStreamer-/child-prosess under `belacoder`, ikke nødvendigvis i hovedprosessen. LED-modulen følger derfor hele prosess-treet fra `belacoder` og kontrollerer `/proc/<pid>/fd/` for alle descendants. Dermed kan den bekrefte at den aktive BELABOX-pipelinen faktisk har videodevicet åpent uten å åpne kameraet selv eller konkurrere med BELABOX om V4L2-enheten.
 
-Dette er valgt fordi BELABOX selv avslutter/restarter `belacoder` når `v4l2src0` feiler eller pipelinen staller. Dermed forsvinner den aktive device-handle under et reelt videobortfall og gul går over til feilindikasjon.
+Dette er valgt fordi BELABOX selv avslutter/restartar pipeline-prosesser når `v4l2src0` feiler eller pipelinen staller. Dermed forsvinner den aktive device-handle under et reelt videobortfall og gul går over til feilindikasjon.
 
 Dersom ingen lokal BELABOX-videoenhet finnes, beholdes eldre RTMP-deteksjon (`http://127.0.0.1/stat` / port 1935) som legacy-fallback.
 
@@ -175,8 +175,8 @@ journalctl --user -u cometen-irl-alerts.service -f
 Eksempler:
 
 ```text
-Video signal active: local BELABOX video device is open by belacoder
-Video signal missing: belacoder is running but no active video device is open
+Video signal active: BELABOX video pipeline has device open (process tree: ...)
+Video signal missing: belacoder process tree is running but no active video device is open
 Video signal inactive: encoder is stopped
 ```
 
