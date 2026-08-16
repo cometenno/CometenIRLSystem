@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 
-// CometenIRLAlerts - local OBS/admin control v1
+// CometenIRLAlerts - local OBS/admin control v1.1
 // This action is intentionally local to Streamer.bot/OBS. It does not use the BELABOX relay.
 // Recommended command permissions: Broadcaster only.
 
@@ -51,22 +51,14 @@ public class CPHInline
 
         switch (action)
         {
-            case "start":
-                return StartIrl();
-            case "go":
-                return GoLiveScene();
-            case "brb":
-                return GoBrb();
-            case "back":
-                return BackToSrt();
-            case "end":
-                return GoEnding();
-            case "stop":
-                return StopIrl();
-            case "scene":
-                return SetSceneAlias(parameter);
-            case "points":
-                return SetPointsMode(parameter);
+            case "start": return StartIrl();
+            case "go": return GoLiveScene();
+            case "brb": return GoBrb();
+            case "back": return BackToSrt();
+            case "end": return GoEnding();
+            case "stop": return StopIrl();
+            case "scene": return SetSceneAlias(parameter);
+            case "points": return SetPointsMode(parameter);
             default:
                 SendChat("IRL: ukjent admin-kommando.");
                 return false;
@@ -258,7 +250,6 @@ public class CPHInline
                 return false;
         }
 
-        // Disarm before any manual system scene so the watchdog cannot race the change.
         SetArmed(false);
 
         if (!SwitchScene(scene))
@@ -361,15 +352,34 @@ public class CPHInline
         try
         {
             CPH.ObsSetScene(sceneName, ObsConnection);
-            Thread.Sleep(150);
-            string after = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
-            bool ok = string.Equals(after, sceneName, StringComparison.Ordinal);
 
-            CPH.LogInfo(
-                "CometenIRL Admin: scene '" + before + "' -> '" + sceneName
-                + "' confirmed=" + ok + "."
+            string after = before;
+            int waited = 0;
+            const int timeoutMs = 1500;
+            const int pollMs = 100;
+
+            while (waited < timeoutMs)
+            {
+                Thread.Sleep(pollMs);
+                waited += pollMs;
+                after = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+
+                if (string.Equals(after, sceneName, StringComparison.Ordinal))
+                {
+                    CPH.LogInfo(
+                        "CometenIRL Admin: scene '" + before + "' -> '" + sceneName
+                        + "' confirmed=true after " + waited + "ms."
+                    );
+                    return true;
+                }
+            }
+
+            CPH.LogWarn(
+                "CometenIRL Admin: scene command sent for '" + sceneName
+                + "', but confirmation timed out after " + timeoutMs
+                + "ms. OBS reports scene='" + after + "'."
             );
-            return ok;
+            return false;
         }
         catch (Exception ex)
         {
