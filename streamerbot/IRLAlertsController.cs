@@ -1,108 +1,146 @@
 using System;
-using System.Text;
+using System.Globalization;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 
 // CometenIRLAlerts - main Streamer.bot IRL controller
 //
-// Initial controller module:
-//   - Watches the BELABOX SRT media input while OBS is live
-//   - Ignores short signal glitches
-//   - Switches to a fallback scene after sustained signal loss
-//   - Remembers the scene that was active before failover
-//   - Restores that scene after the SRT input has been stable again
-//   - Does not force a restore if the operator manually changed scene
-//   - Writes temporary diagnostic lines to the Streamer.bot log
+// BELABOX watchdog v2
+// -------------------
+// OBS Media Source state is not reliable when an SRT feed disappears because
+// OBS may keep reporting PLAYING while the last frame is frozen.
 //
-// Default OBS names:
-//   SRT Media Source: belabox
-//   SRT Scene:        BELABOX SRT
+// This controller therefore uses the IRL Alerts heartbeat from ROCK 5B+:
+//   ROCK 5B+ -> heartbeat.php -> relay/database -> receiver_status.php
+//   Streamer.bot -> receiver_status.php -> OBS scene failover
+//
+// Default OBS setup:
+//   IRL scene:        BELABOX SRT
 //   Fallback scene:   IRL - SIGNAL MISTET
 //
-// Optional Streamer.bot global overrides:
-//   CometenIRL_SrtInputName      string
-//   CometenIRL_FallbackScene     string
-//   CometenIRL_SrtFailChecks     int     Defaults to 3
-//   CometenIRL_SrtRecoverChecks  int     Defaults to 5
+// Existing Streamer.bot globals used:
+//   CometenIRL_RelayUrl
+//   CometenIRL_SenderToken
 //
-// Run this action from a repeating Streamer.bot Timed Action every 1 second.
+// Optional globals:
+//   CometenIRL_FallbackScene          string, default "IRL - SIGNAL MISTET"
+//   CometenIRL_HeartbeatReceiverId    string, default "belabox"
+//   CometenIRL_HeartbeatFailChecks    int, default 1
+//   CometenIRL_HeartbeatRecoverChecks int, default 3
+//
+// The relay itself marks the receiver offline after 5 seconds without a
+// heartbeat. The 1-second Streamer.bot timer can therefore use one confirmed
+// offline response without reacting to a one-second network hiccup.
 
 public class CPHInline
 {
+    private static readonly HttpClient Http = CreateHttpClient();
+
     private const int ObsConnection = 0;
-
-    private const string DefaultSrtInputName = "belabox";
     private const string DefaultFallbackScene = "IRL - SIGNAL MISTET";
-    private const int DefaultFailChecks = 3;
-    private const int DefaultRecoverChecks = 5;
+    private const string DefaultReceiverId = "belabox";
+    private const int DefaultFailChecks = 1;
+    private const int DefaultRecoverChecks = 3;
 
-    private const string VarSrtInputName = "CometenIRL_SrtInputName";
+    private const string VarRelayUrl = "CometenIRL_RelayUrl";
+    private const string VarSenderToken = "CometenIRL_SenderToken";
     private const string VarFallbackScene = "CometenIRL_FallbackScene";
-    private const string VarFailChecks = "CometenIRL_SrtFailChecks";
-    private const string VarRecoverChecks = "CometenIRL_SrtRecoverChecks";
+    private const string VarReceiverId = "CometenIRL_HeartbeatReceiverId";
+    private const string VarFailChecks = "CometenIRL_HeartbeatFailChecks";
+    private const string VarRecoverChecks = "CometenIRL_HeartbeatRecoverChecks";
 
-    private const string VarFailCount = "CometenIRL_SrtFailCount";
-    private const string VarRecoverCount = "CometenIRL_SrtRecoverCount";
+    private const string VarFailCount = "CometenIRL_HeartbeatFailCount";
+    private const string VarRecoverCount = "CometenIRL_HeartbeatRecoverCount";
     private const string VarFallbackActive = "CometenIRL_SrtFallbackActive";
     private const string VarReturnScene = "CometenIRL_SrtReturnScene";
-    private const string VarLastMediaState = "CometenIRL_SrtLastMediaState";
+    private const string VarLastHeartbeatState = "CometenIRL_LastHeartbeatState";
+    private const string VarLastHeartbeatAge = "CometenIRL_LastHeartbeatAgeSeconds";
+    private const string VarQueryFailCount = "CometenIRL_HeartbeatQueryFailCount";
 
     public bool Execute()
     {
         bool obsConnected = CPH.ObsIsConnected(ObsConnection);
         bool obsStreaming = CPH.ObsIsStreaming(ObsConnection);
 
-        CPH.LogInfo("CometenIRL TEST: tick - OBS connected="
-            + obsConnected
-            + " streaming="
-            + obsStreaming);
-
-        string inputName = (CPH.GetGlobalVar<string>(VarSrtInputName, true) ?? string.Empty).Trim();
-        string fallbackScene = (CPH.GetGlobalVar<string>(VarFallbackScene, true) ?? string.Empty).Trim();
-
-        if (string.IsNullOrWhiteSpace(inputName))
+        if (!obsConnected)
         {
-            inputName = DefaultSrtInputName;
+            CPH.LogWarn("CometenIRL Watchdog: OBS is not connected.");
+            return true;
         }
 
-        if (string.IsNullOrWhiteSpace(fallbackScene))
-        {
-            fallbackScene = DefaultFallbackScene;
-        }
-
-        // The watchdog is intentionally inactive whenever OBS is not actually live.
+        // Never force IRL scene changes while OBS is not actually streaming.
         if (!obsStreaming)
         {
             ResetRuntimeState();
             return true;
         }
 
-        string mediaState;
-        if (!TryGetMediaState(inputName, out mediaState))
+        string relayUrl = (CPH.GetGlobalVar<string>(VarRelayUrl, true) ?? string.Empty).Trim();
+        string senderToken = (CPH.GetGlobalVar<string>(VarSenderToken, true) ?? string.Empty).Trim();
+        string fallbackScene = (CPH.GetGlobalVar<string>(VarFallbackScene, true) ?? string.Empty).Trim();
+        string receiverId = (CPH.GetGlobalVar<string>(VarReceiverId, true) ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(fallbackScene))
         {
-            // A malformed/missing OBS response is treated as a configuration or
-            // connection problem, not immediately as a real SRT outage. This
-            // prevents an incorrect source name from forcing the fallback scene.
+            fallbackScene = DefaultFallbackScene;
+        }
+
+        if (string.IsNullOrWhiteSpace(receiverId))
+        {
+            receiverId = DefaultReceiverId;
+        }
+
+        if (string.IsNullOrWhiteSpace(relayUrl) || string.IsNullOrWhiteSpace(senderToken))
+        {
+            CPH.LogError("CometenIRL Watchdog: Missing CometenIRL_RelayUrl or CometenIRL_SenderToken.");
             return true;
         }
 
-        CPH.SetGlobalVar(VarLastMediaState, mediaState, true);
-        CPH.LogInfo("CometenIRL TEST: " + inputName + " mediaState=" + mediaState);
+        bool online;
+        double? ageSeconds;
+        string rawStatus;
+
+        if (!TryGetHeartbeatStatus(relayUrl, senderToken, receiverId, out online, out ageSeconds, out rawStatus))
+        {
+            HandleStatusQueryFailure();
+            return true;
+        }
+
+        HandleStatusQueryRecovered();
+
+        string state = online ? "online" : "offline";
+        string previousState = (CPH.GetGlobalVar<string>(VarLastHeartbeatState, true) ?? string.Empty).Trim();
+
+        CPH.SetGlobalVar(VarLastHeartbeatState, state, true);
+        CPH.SetGlobalVar(VarLastHeartbeatAge, ageSeconds.HasValue ? ageSeconds.Value : -1.0, true);
+
+        if (!string.Equals(previousState, state, StringComparison.OrdinalIgnoreCase))
+        {
+            CPH.LogInfo(
+                "CometenIRL Watchdog: BELABOX heartbeat " + state
+                + FormatAge(ageSeconds)
+                + "."
+            );
+        }
 
         int failChecks = CPH.GetGlobalVar<int>(VarFailChecks, true);
         int recoverChecks = CPH.GetGlobalVar<int>(VarRecoverChecks, true);
-        if (failChecks <= 0) failChecks = DefaultFailChecks;
-        if (recoverChecks <= 0) recoverChecks = DefaultRecoverChecks;
+
+        if (failChecks <= 0)
+        {
+            failChecks = DefaultFailChecks;
+        }
+
+        if (recoverChecks <= 0)
+        {
+            recoverChecks = DefaultRecoverChecks;
+        }
 
         int failCount = CPH.GetGlobalVar<int>(VarFailCount, true);
         int recoverCount = CPH.GetGlobalVar<int>(VarRecoverCount, true);
         bool fallbackActive = CPH.GetGlobalVar<bool>(VarFallbackActive, true);
 
-        bool signalOk = string.Equals(
-            mediaState,
-            "OBS_MEDIA_STATE_PLAYING",
-            StringComparison.OrdinalIgnoreCase);
-
-        if (signalOk)
+        if (online)
         {
             failCount = 0;
 
@@ -115,9 +153,12 @@ public class CPHInline
             recoverCount++;
             SaveCounters(failCount, recoverCount);
 
-            CPH.LogInfo("CometenIRL Controller: SRT recovered "
+            CPH.LogInfo(
+                "CometenIRL Watchdog: BELABOX recovery "
                 + recoverCount + "/" + recoverChecks
-                + " (" + mediaState + ").");
+                + FormatAge(ageSeconds)
+                + "."
+            );
 
             if (recoverCount >= recoverChecks)
             {
@@ -127,53 +168,115 @@ public class CPHInline
             return true;
         }
 
-        // Any valid OBS media state other than PLAYING counts toward signal loss.
-        // Examples include BUFFERING, OPENING, STOPPED and ERROR.
         recoverCount = 0;
         failCount++;
         SaveCounters(failCount, recoverCount);
-
-        CPH.LogWarn("CometenIRL Controller: SRT not healthy "
-            + failCount + "/" + failChecks
-            + " (" + mediaState + ").");
 
         if (fallbackActive || failCount < failChecks)
         {
             return true;
         }
 
-        ActivateFallback(fallbackScene, mediaState);
+        ActivateFallback(fallbackScene, ageSeconds);
         return true;
     }
 
-    private bool TryGetMediaState(string inputName, out string mediaState)
+    private static HttpClient CreateHttpClient()
     {
-        mediaState = string.Empty;
+        HttpClient client = new HttpClient();
+        client.Timeout = TimeSpan.FromSeconds(2.5);
+        return client;
+    }
+
+    private bool TryGetHeartbeatStatus(
+        string relayUrl,
+        string senderToken,
+        string receiverId,
+        out bool online,
+        out double? ageSeconds,
+        out string rawStatus)
+    {
+        online = false;
+        ageSeconds = null;
+        rawStatus = string.Empty;
+
+        string endpoint = relayUrl.TrimEnd('/')
+            + "/receiver_status.php?receiver_id="
+            + Uri.EscapeDataString(receiverId);
 
         try
         {
-            string requestData = "{\"inputName\":\"" + JsonEscape(inputName) + "\"}";
-            string response = CPH.ObsSendRaw("GetMediaInputStatus", requestData, ObsConnection);
-
-            mediaState = ExtractJsonString(response, "mediaState");
-            if (string.IsNullOrWhiteSpace(mediaState))
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, endpoint))
             {
-                CPH.LogError("CometenIRL Controller: OBS returned no mediaState for input '"
-                    + inputName + "'. Raw response: " + (response ?? "<null>"));
+                request.Headers.TryAddWithoutValidation("X-Cometen-Token", senderToken);
+                request.Headers.TryAddWithoutValidation("Cache-Control", "no-cache");
+
+                using (HttpResponseMessage response = Http.SendAsync(request).GetAwaiter().GetResult())
+                {
+                    rawStatus = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        CPH.LogError(
+                            "CometenIRL Watchdog: receiver_status.php returned HTTP "
+                            + (int)response.StatusCode + ": " + rawStatus
+                        );
+                        return false;
+                    }
+                }
+            }
+
+            bool ok;
+            if (!TryExtractJsonBool(rawStatus, "ok", out ok) || !ok)
+            {
+                CPH.LogError("CometenIRL Watchdog: invalid receiver status response: " + rawStatus);
                 return false;
             }
 
+            if (!TryExtractJsonBool(rawStatus, "online", out online))
+            {
+                CPH.LogError("CometenIRL Watchdog: receiver status has no online field: " + rawStatus);
+                return false;
+            }
+
+            ageSeconds = ExtractJsonNullableDouble(rawStatus, "age_seconds");
             return true;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            CPH.LogError("CometenIRL Controller: GetMediaInputStatus failed for '"
-                + inputName + "': " + ex.Message);
+            CPH.LogError("CometenIRL Watchdog: heartbeat status request failed: " + exception.Message);
             return false;
         }
     }
 
-    private void ActivateFallback(string fallbackScene, string mediaState)
+    private void HandleStatusQueryFailure()
+    {
+        int count = CPH.GetGlobalVar<int>(VarQueryFailCount, true) + 1;
+        CPH.SetGlobalVar(VarQueryFailCount, count, true);
+
+        // A relay/webhotel failure is not automatically treated as a BELABOX
+        // failure. We only fail over on a successful status response saying that
+        // the BELABOX heartbeat itself is stale.
+        if (count == 1 || count == 5 || count % 30 == 0)
+        {
+            CPH.LogWarn(
+                "CometenIRL Watchdog: heartbeat status unavailable (attempt "
+                + count + "). No automatic scene change on relay errors."
+            );
+        }
+    }
+
+    private void HandleStatusQueryRecovered()
+    {
+        int count = CPH.GetGlobalVar<int>(VarQueryFailCount, true);
+        if (count > 0)
+        {
+            CPH.LogInfo("CometenIRL Watchdog: heartbeat status connection restored.");
+        }
+        CPH.SetGlobalVar(VarQueryFailCount, 0, true);
+    }
+
+    private void ActivateFallback(string fallbackScene, double? ageSeconds)
     {
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
 
@@ -186,9 +289,12 @@ public class CPHInline
         CPH.SetGlobalVar(VarFallbackActive, true, true);
         CPH.SetGlobalVar(VarRecoverCount, 0, true);
 
-        CPH.LogWarn("CometenIRL Controller: SRT SIGNAL LOST ("
-            + mediaState + "). Scene '" + currentScene
-            + "' -> '" + fallbackScene + "'.");
+        CPH.LogWarn(
+            "CometenIRL Watchdog: BELABOX HEARTBEAT LOST"
+            + FormatAge(ageSeconds)
+            + ". Scene '" + currentScene
+            + "' -> '" + fallbackScene + "'."
+        );
 
         if (!string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
         {
@@ -204,18 +310,22 @@ public class CPHInline
         if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal)
             && !string.IsNullOrWhiteSpace(returnScene))
         {
-            CPH.LogInfo("CometenIRL Controller: SRT stable again. Scene '"
-                + fallbackScene + "' -> '" + returnScene + "'.");
+            CPH.LogInfo(
+                "CometenIRL Watchdog: BELABOX stable again. Scene '"
+                + fallbackScene + "' -> '" + returnScene + "'."
+            );
             CPH.ObsSetScene(returnScene, ObsConnection);
         }
         else if (!string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
         {
-            CPH.LogInfo("CometenIRL Controller: SRT stable again, but scene was changed manually to '"
-                + currentScene + "'. Auto-return skipped.");
+            CPH.LogInfo(
+                "CometenIRL Watchdog: BELABOX stable again, but scene was changed manually to '"
+                + currentScene + "'. Auto-return skipped."
+            );
         }
         else
         {
-            CPH.LogWarn("CometenIRL Controller: SRT stable again, but no return scene was stored.");
+            CPH.LogWarn("CometenIRL Watchdog: BELABOX stable again, but no return scene was stored.");
         }
 
         ResetRuntimeState();
@@ -233,67 +343,62 @@ public class CPHInline
         CPH.SetGlobalVar(VarRecoverCount, 0, true);
         CPH.SetGlobalVar(VarFallbackActive, false, true);
         CPH.SetGlobalVar(VarReturnScene, string.Empty, true);
-        CPH.SetGlobalVar(VarLastMediaState, string.Empty, true);
     }
 
-    private static string ExtractJsonString(string json, string key)
+    private static string FormatAge(double? ageSeconds)
     {
-        if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(key))
+        if (!ageSeconds.HasValue || ageSeconds.Value < 0)
         {
             return string.Empty;
         }
+
+        return " (age "
+            + ageSeconds.Value.ToString("0.0", CultureInfo.InvariantCulture)
+            + "s)";
+    }
+
+    private static bool TryExtractJsonBool(string json, string key, out bool value)
+    {
+        value = false;
 
         Match match = Regex.Match(
-            json,
-            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"",
-            RegexOptions.IgnoreCase);
+            json ?? string.Empty,
+            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(true|false)",
+            RegexOptions.IgnoreCase
+        );
 
-        return match.Success ? JsonUnescape(match.Groups[1].Value) : string.Empty;
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        value = string.Equals(match.Groups[1].Value, "true", StringComparison.OrdinalIgnoreCase);
+        return true;
     }
 
-    private static string JsonEscape(string value)
+    private static double? ExtractJsonNullableDouble(string json, string key)
     {
-        if (value == null)
+        Match match = Regex.Match(
+            json ?? string.Empty,
+            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(null|-?[0-9]+(?:\\.[0-9]+)?)",
+            RegexOptions.IgnoreCase
+        );
+
+        if (!match.Success || string.Equals(match.Groups[1].Value, "null", StringComparison.OrdinalIgnoreCase))
         {
-            return string.Empty;
+            return null;
         }
 
-        StringBuilder builder = new StringBuilder(value.Length + 16);
-        foreach (char character in value)
+        double parsed;
+        if (double.TryParse(
+            match.Groups[1].Value,
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out parsed))
         {
-            switch (character)
-            {
-                case '\\': builder.Append("\\\\"); break;
-                case '"': builder.Append("\\\""); break;
-                case '\b': builder.Append("\\b"); break;
-                case '\f': builder.Append("\\f"); break;
-                case '\n': builder.Append("\\n"); break;
-                case '\r': builder.Append("\\r"); break;
-                case '\t': builder.Append("\\t"); break;
-                default:
-                    if (character < 32)
-                    {
-                        builder.Append("\\u");
-                        builder.Append(((int)character).ToString("x4"));
-                    }
-                    else
-                    {
-                        builder.Append(character);
-                    }
-                    break;
-            }
+            return parsed;
         }
 
-        return builder.ToString();
-    }
-
-    private static string JsonUnescape(string value)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return string.Empty;
-        }
-
-        return Regex.Unescape(value);
+        return null;
     }
 }
