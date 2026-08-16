@@ -268,5 +268,6 @@ Følgende ble testet ende-til-ende fra Twitch-chat via Streamer.bot og relay til
 - `!alerttest` - lokal testlyd spilles av på WPS200 og bekreftes i chat
 - `!mute` - WPS200 blir muted og bekreftes i chat
 - `!unmute` - WPS200 blir unmuted og bekreftes i chat
+- `!volum` / dynamisk volumkommando - ønsket volum settes på WPS200 og bekreftes i chat
 
-Volumkommandoen gjenstår som siste praktiske remote-control-test i denne testserien.
+Remote-control-delen regnes dermed som **fullt praktisk verifisert**.
