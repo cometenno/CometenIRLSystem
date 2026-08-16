@@ -17,7 +17,7 @@ VIDEO_STATUS_PATH = Path("/run/cometen-irl-video-status.json")
 
 
 class ProbedStatusLedController(StatusLedController):
-    def _read_root_video_probe(self) -> tuple[bool, bool, list[int]] | None:
+    def _read_root_video_payload(self) -> dict[str, Any] | None:
         try:
             payload = json.loads(VIDEO_STATUS_PATH.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
@@ -30,19 +30,25 @@ class ProbedStatusLedController(StatusLedController):
             )
             if updated <= 0 or (time.time() - updated) > stale_seconds:
                 return None
-
-            active = bool(payload.get("active", False))
-            encoder_running = bool(payload.get("encoder_running", False))
-            raw_pid = payload.get("pid")
-            pids: list[int] = []
-            if raw_pid is not None:
-                try:
-                    pids.append(int(raw_pid))
-                except (TypeError, ValueError):
-                    pass
-            return active, encoder_running, pids
+            return payload
         except Exception:
             return None
+
+    def _read_root_video_probe(self) -> tuple[bool, bool, list[int]] | None:
+        payload = self._read_root_video_payload()
+        if payload is None:
+            return None
+
+        active = bool(payload.get("active", False))
+        encoder_running = bool(payload.get("encoder_running", False))
+        raw_pid = payload.get("pid")
+        pids: list[int] = []
+        if raw_pid is not None:
+            try:
+                pids.append(int(raw_pid))
+            except (TypeError, ValueError):
+                pass
+        return active, encoder_running, pids
 
     def _video_state(self) -> tuple[bool | None, bool, list[int]]:
         probed = self._read_root_video_probe()
@@ -55,6 +61,33 @@ class ProbedStatusLedController(StatusLedController):
         if probed is not None:
             return probed[1]
         return super()._live_process_active()
+
+    def _log_video_transition(
+        self,
+        camera: bool | None,
+        live_process: bool,
+        process_tree: list[int],
+    ) -> None:
+        if camera == self._last_video_state:
+            return
+        self._last_video_state = camera
+
+        payload = self._read_root_video_payload()
+        if payload is not None:
+            source_present = bool(payload.get("source_present", camera is True))
+            pipeline_active = bool(payload.get("pipeline_active", False))
+
+            if source_present and live_process and pipeline_active:
+                LOG.info("Video input active: source present and BELABOX encoder pipeline is using it")
+            elif source_present and not live_process:
+                LOG.info("Video input available: source present, BELABOX encoder is stopped")
+            elif live_process:
+                LOG.warning("Video input missing: BELABOX encoder is running but video pipeline is not active")
+            else:
+                LOG.info("Video input unavailable: no local video source detected")
+            return
+
+        super()._log_video_transition(camera, live_process, process_tree)
 
 
 def read_temperature() -> str:
@@ -112,11 +145,11 @@ def build_expanded_status(config: dict[str, Any]) -> str:
         video_text = "VIDEO ?"
 
     if encoder and video is True:
-        live_text = "LIVE OK"
+        live_text = "ENC OK"
     elif encoder:
-        live_text = "ENC ON"
+        live_text = "ENC ERR"
     else:
-        live_text = "LIVE OFF"
+        live_text = "ENC OFF"
 
     return (
         f"IRL: SYS OK | {read_temperature()} {read_fan_state()} | {audio} | "
