@@ -2,11 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_NAME="cometen-irl-alerts.service"
-TEMPLATE="${SCRIPT_DIR}/cometen-irl-alerts-user.service"
 SERVICE_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
-SERVICE_PATH="${SERVICE_DIR}/${SERVICE_NAME}"
 CONFIG_PATH="${SCRIPT_DIR}/config.json"
+
+ALERT_SERVICE="cometen-irl-alerts.service"
+ALERT_TEMPLATE="${SCRIPT_DIR}/cometen-irl-alerts-user.service"
+HEARTBEAT_SERVICE="cometen-irl-heartbeat.service"
+HEARTBEAT_TEMPLATE="${SCRIPT_DIR}/cometen-irl-heartbeat-user.service"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 ble ikke funnet."
@@ -24,21 +26,39 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${TEMPLATE}" ]]; then
-  echo "Mangler service-malen ${TEMPLATE}"
-  exit 1
-fi
+for template in "${ALERT_TEMPLATE}" "${HEARTBEAT_TEMPLATE}"; do
+  if [[ ! -f "${template}" ]]; then
+    echo "Mangler service-malen ${template}"
+    exit 1
+  fi
+done
+
+python3 -m json.tool "${CONFIG_PATH}" >/dev/null
 
 mkdir -p "${SERVICE_DIR}"
-sed "s|@RECEIVER_DIR@|${SCRIPT_DIR}|g" "${TEMPLATE}" > "${SERVICE_PATH}"
+
+sed "s|@RECEIVER_DIR@|${SCRIPT_DIR}|g" \
+  "${ALERT_TEMPLATE}" \
+  > "${SERVICE_DIR}/${ALERT_SERVICE}"
+
+sed "s|@RECEIVER_DIR@|${SCRIPT_DIR}|g" \
+  "${HEARTBEAT_TEMPLATE}" \
+  > "${SERVICE_DIR}/${HEARTBEAT_SERVICE}"
 
 systemctl --user daemon-reload
-systemctl --user enable --now "${SERVICE_NAME}"
+systemctl --user enable --now "${ALERT_SERVICE}"
+systemctl --user enable --now "${HEARTBEAT_SERVICE}"
 
 echo
-echo "Cometen IRL Alerts er installert som brukertjeneste."
-echo "Status: systemctl --user status ${SERVICE_NAME}"
-echo "Logg:   journalctl --user -u ${SERVICE_NAME} -f"
+echo "Cometen IRL Alerts er installert som brukertjenester."
+echo
+echo "Alert receiver:"
+echo "  Status: systemctl --user status ${ALERT_SERVICE}"
+echo "  Logg:   journalctl --user -u ${ALERT_SERVICE} -f"
+echo
+echo "Heartbeat:"
+echo "  Status: systemctl --user status ${HEARTBEAT_SERVICE}"
+echo "  Logg:   journalctl --user -u ${HEARTBEAT_SERVICE} -f"
 echo
 echo "For oppstart uten innlogging, kjør én gang:"
 echo "sudo loginctl enable-linger ${USER}"
