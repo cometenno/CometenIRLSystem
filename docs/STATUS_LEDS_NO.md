@@ -12,8 +12,8 @@ Bekreftet GPIO-oppsett på Cometen BELABOX:
 PIN 32 - PIN_32 - grønn - SYSTEM / ONLINE
 PIN 34 - GND    - felles jord
 PIN 36 - PIN_36 - blå   - BLUETOOTH / WPS200
-PIN 38 - PIN_38 - gul    - VIDEO SIGNAL / INPUT
-PIN 40 - PIN_40 - rød    - LIVE / OUTPUT
+PIN 38 - PIN_38 - gul    - VIDEO INPUT
+PIN 40 - PIN_40 - rød    - BELABOX ENCODER / OUTPUT
 ```
 
 Disse fem fysiske pinnene ligger etter hverandre på samme rekke av 40-pin-headeren: `32, 34, 36, 38, 40`.
@@ -50,15 +50,25 @@ Langt LED-bein / anode går mot GPIO via motstanden. Kort bein / flat side / kat
 - sakte blink: WPS200 er ikke koblet til, men watchdog-tjenesten kjører
 - rask blink: WPS200 er borte og watchdog-tjenesten er ikke aktiv
 
-### Gul - VIDEO SIGNAL / INPUT
+### Gul - VIDEO INPUT
 
-Gul viser aktiv lokal videopipeline, ikke bare at en USB-enhet er fysisk koblet til.
+Gul og rød er bevisst skilt fra hverandre.
 
-- fast lys: `belacoder`/pipeline har et faktisk BELABOX-videodevice åpent
-- rask blink: encoder kjører, men ingen videodevice er aktivt åpent - input/pipeline er mistet eller restartes
-- av: encoder/videopipeline er ikke aktiv
+**Gul skal vise at videokilden/inputen er tilgjengelig, også når BELABOX-streamen er stoppet med vilje.**
 
-**Bekreftet 16. august 2026:** root video-probe + LED-integrasjonen er testet på ROCK 5B+ med `/dev/usb_capture -> /dev/video1`. Med aktiv videopipeline lyser gul LED fast som tiltenkt.
+Regler:
+
+- fast lys når videokilden finnes og BELABOX encoder er stoppet
+- fast lys når BELABOX encoder kjører og pipelinen faktisk bruker videodevicet
+- rask blink når encoder kjører, men videodevicet ikke lenger er aktivt i pipelinen - for eksempel ved V4L2/GStreamer-feil eller pipeline-restart
+- av når ingen kjent lokal videokilde er tilgjengelig
+
+Dette betyr at `Stop` i BELABOX normalt skal gi:
+
+```text
+Gul: FAST - videokilden finnes fortsatt
+Rød: AV   - belacoder/encoder er stoppet
+```
 
 Kjente videoenheter:
 
@@ -73,6 +83,12 @@ Kjente videoenheter:
 ```text
 /dev/usb_capture -> /dev/video1
 ```
+
+På dagens USB Facecam-oppsett brukes tilstedeværelsen av `/dev/usb_capture` som input-status når encoder er stoppet. Når encoder kjører kreves i tillegg at `belacoder`-pipelinen faktisk har videoenheten åpen.
+
+For en framtidig HDMI-kilde kan kilde-spesifikk signal-lock/dv-timings-deteksjon legges til dersom det er nødvendig å skille mellom at HDMI-capture-enheten finnes og at HDMI-signalet faktisk er låst.
+
+**Bekreftet 16. august 2026:** root video-probe + LED-integrasjonen er testet på ROCK 5B+ med `/dev/usb_capture -> /dev/video1`. Med aktiv videopipeline lyser gul LED fast.
 
 ### Hvorfor root video-probe brukes
 
@@ -100,7 +116,7 @@ cometen-irl-alerts.service        vanlig user service
 Gul/rød LED + !irlstatus
 ```
 
-Root-proben åpner aldri kameraet. Den leser bare hvilke eksisterende file descriptors `belacoder`/barn har åpne og skriver en liten JSON-status til `/run`. Dermed konkurrerer den ikke med GStreamer om V4L2-enheten.
+Root-proben åpner aldri kameraet. Den leser bare hvilke eksisterende file descriptors `belacoder`/barn har åpne og hvilke kjente video-device-paths som finnes. Dermed konkurrerer den ikke med GStreamer om V4L2-enheten.
 
 Statusfilen kan kontrolleres manuelt:
 
@@ -108,22 +124,47 @@ Statusfilen kan kontrolleres manuelt:
 cat /run/cometen-irl-video-status.json
 ```
 
-Ved normalt aktivt USB-videosignal forventes omtrent:
+Ny statusmodell:
 
 ```json
-{"encoder_running":true,"active":true,"device":"/dev/video1","pid":1234}
+{
+  "encoder_running": true,
+  "source_present": true,
+  "pipeline_active": true,
+  "active": true,
+  "device": "/dev/video1"
+}
+```
+
+Feltene betyr:
+
+- `source_present` - lokal videokilde/device finnes
+- `pipeline_active` - encoder-pipelinen har videodevicet åpent
+- `encoder_running` - `belacoder` kjører
+- `active` - effektiv status som brukes av gul LED
+
+Når encoder er stoppet med vilje og input fortsatt finnes, forventes omtrent:
+
+```json
+{
+  "encoder_running": false,
+  "source_present": true,
+  "pipeline_active": false,
+  "active": true,
+  "device": "/dev/video1"
+}
 ```
 
 LED-koden godtar bare fersk probe-status. Standard stale-grense er 3 sekunder. Hvis root-proben ikke kjører eller statusfilen er gammel, faller modulen tilbake til eldre lokal/RTMP-deteksjon.
 
-### Rød - LIVE / OUTPUT
+### Rød - BELABOX ENCODER / OUTPUT
 
-- fast lys: `belacoder` kjører og video-input er aktiv
-- sakte blink: `belacoder` kjører, men videostatus kan ikke bestemmes
-- rask blink: `belacoder` kjører mens video-input mangler
-- av: BELABOX encoder ikke aktiv / ikke live
+- fast lys: `belacoder` kjører og video-input/pipeline er OK
+- rask blink: `belacoder` kjører, men video-input/pipeline mangler
+- sakte blink: encoder kjører, men videostatus kan ikke bestemmes
+- av: BELABOX encoder er stoppet
 
-Rød LED viser foreløpig BELABOX encoder/output-status. Den er ikke Twitch/OBS-live-indikator.
+Rød LED viser BELABOX encoder/output-status. Den er ikke Twitch/OBS-live-indikator.
 
 ## Oppstartstest
 
@@ -211,14 +252,19 @@ Forventet:
 grønn -> blå -> gul -> rød -> alle
 ```
 
-## Test videosignalstatus
+## Test video- og encoderstatus
 
 ```bash
 cat /run/cometen-irl-video-status.json
 journalctl --user -u cometen-irl-alerts.service -f
 ```
 
-Når root-proben rapporterer `active=true`, skal gul bli fast. Ved et reelt GStreamer/V4L2-bortfall forventes `active=false` mens encoder restarter, og gul går til rask blink eller avhengig av encoderstatus.
+Testsekvens:
+
+1. Kamera/input koblet til, BELABOX startet - gul fast, rød fast.
+2. Trykk `Stop` i BELABOX - gul skal forbli fast, rød skal gå av.
+3. Start BELABOX igjen - rød skal bli fast igjen når pipeline er aktiv.
+4. Ved reelt V4L2/GStreamer-drop mens encoder kjører skal gul/rød indikere feilen under restart.
 
 ## Installer/oppdater user-tjenestene
 
