@@ -1,75 +1,85 @@
 # Oppsett i Streamer.bot
 
-## 1. Lag globale variabler
+Sist oppdatert: 16. august 2026.
 
-Opprett disse som **Persisted Global Variables**:
+Streamer.bot-delen består av:
+
+```text
+CometenIRL_Send.cs            alert-sender
+CometenIRL_RemoteControl.cs   remote control/status
+IRLAlertsController.cs        BELABOX/OBS watchdog-controller
+```
+
+Alle tre hører til samme Cometen IRL Alerts-modul.
+
+## 1. Relay-globals
+
+Opprett som **Persisted Global Variables**:
 
 ```text
 CometenIRL_RelayUrl
 CometenIRL_SenderToken
 ```
 
-Eksempel på relay-URL:
+Relay URL er basemappen, for eksempel:
 
 ```text
-https://DITT-DOMENE/irl-alerts
+https://DITT-DOMENE/CometenIRLAlerts_Relay
 ```
 
-Tokenet må være identisk med `sender_token` i relayens `config.php`.
+Ikke legg `/push.php` i globalen.
 
-## 2. Lag sender-action
+## 2. Sender-action
 
-Lag en action med navnet:
+Lag action:
 
 ```text
 Cometen IRL Notifications - Send
 ```
 
-Legg inn en `Execute C# Code` sub-action og lim inn hele innholdet fra:
+Legg inn `Execute C# Code` og lim inn hele:
 
 ```text
 streamerbot/CometenIRL_Send.cs
 ```
 
-## 3. Lag test-action
+Kompiler.
 
-Lag en action med navnet:
+## 3. Test sender
+
+Lag en midlertidig action med:
 
 ```text
-Cometen IRL Notifications - Test
+eventType = test
+message = Cometen IRL test
 ```
 
-Legg inn disse sub-actions i rekkefølge:
+Kjør deretter:
 
-1. `Set Argument` - `eventType` = `test`
-2. `Set Argument` - `message` = `Cometen IRL test`
-3. Kjør action `Cometen IRL Notifications - Send`
+```text
+Cometen IRL Notifications - Send
+```
 
-Når receiveren er på, skal `test.wav` spilles én gang.
+`test.wav` skal spilles én gang på receiveren.
 
-## 4. Koble på virkelige hendelser
-
-For hver trigger settes først `eventType`, og deretter kjøres sender-actionen.
+## 4. Virkelige eventtyper
 
 Eksempler:
 
 ```text
-Twitch Follow       -> eventType = follow
-Twitch Sub          -> eventType = sub
-Twitch Re-Sub       -> eventType = resub
-Twitch Gift Sub     -> eventType = giftsub
-Twitch Raid         -> eventType = raid
-Twitch Cheer        -> eventType = bits
-Channel Point       -> eventType = channelpoint
+Twitch Follow       -> follow
+Twitch Sub          -> sub
+Twitch Re-Sub       -> resub
+Twitch Gift Sub     -> giftsub/gifted
+Twitch Gift Bomb    -> giftbomb
+Twitch Raid         -> raid
+Twitch Cheer        -> bits
+Donation            -> donation
+YouTube Sub         -> youtubesub
+Channel Point       -> channelpoint
 ```
 
-Senderen prøver automatisk å finne vanlige Streamer.bot-argumenter som `user`, `userName`, `displayName`, `viewerCount`, `viewers`, `bits` og `amount`.
-
-Argumentnavn kan variere mellom triggere. Vi verifiserer og låser riktige felt per trigger når systemet testes i din Streamer.bot-versjon.
-
-## 5. Egendefinerte meldinger
-
-Følgende argumenter kan settes før sender-actionen:
+Senderen leser vanlige Streamer.bot-argumenter og kan også få eksplisitte argumenter som:
 
 ```text
 eventType
@@ -79,21 +89,126 @@ priority
 amount
 ```
 
-Eksempel for moderatorvarsel:
+## 5. Remote control
+
+Bruk hele:
 
 ```text
-eventType = moderator
-message   = Sjekk mobilen
-priority  = 90
-sound     = moderator.wav
+streamerbot/CometenIRL_RemoteControl.cs
 ```
 
-## Feilsøking
+Dette dekker IRL-volum, mute/unmute, status og alerttest gjennom samme relay.
 
-Se Streamer.bot-loggen etter linjer som starter med:
+Detaljer:
 
 ```text
-CometenIRL:
+docs/REMOTE_CONTROL_NO.md
 ```
 
-Ved HTTP-feil logges både statuskode og svaret fra relayen.
+## 6. BELABOX watchdog-globals
+
+Watchdog bruker BELABOX Cloud ingest-stats.
+
+Obligatorisk lokal/global stream-ID:
+
+```text
+CometenIRL_BelaboxStreamId
+```
+
+Stream-ID skal ikke hardkodes eller committes.
+
+For dagens EU-ingest:
+
+```text
+CometenIRL_BelaboxStatsBaseUrl = http://eu.srt.belabox.net:8080
+```
+
+Scener:
+
+```text
+CometenIRL_FallbackScene = IRL - SIGNAL MISTET
+CometenIRL_DefaultReturnScene = BELABOX SRT
+```
+
+Testmodus:
+
+```text
+CometenIRL_WatchdogLiveOnly = false
+```
+
+Produksjon, når controlleren er godkjent:
+
+```text
+CometenIRL_WatchdogLiveOnly = true
+```
+
+Statusglobals som kan brukes videre:
+
+```text
+CometenIRL_BelaboxConnected
+CometenIRL_BelaboxBitrate
+CometenIRL_BelaboxRtt
+CometenIRL_BelaboxDroppedPackets
+CometenIRL_BelaboxState
+```
+
+Disse skal gjenbrukes av senere `!irlstatus`, LED-status og diagnostikk.
+
+## 7. Watchdog-action
+
+`IRLAlertsController.cs` kjøres fra én sentral Streamer.bot-action, typisk med repetisjon omtrent én gang per sekund under test.
+
+Controlleren skal være eneste sceneautoritet for denne funksjonen. Ikke kjør NOALBS eller en annen automatisk scene-switcher parallelt.
+
+OBS-scener:
+
+```text
+BELABOX SRT
+IRL - SIGNAL MISTET
+```
+
+### Status per 16. august 2026
+
+Watchdog er fortsatt test/development. Ingestdeteksjon og fallback er bekreftet, men pending/recovery-state skal ferdigstilles før `CometenIRL_WatchdogLiveOnly=true` regnes som produksjonsklar.
+
+Detaljer:
+
+```text
+docs/WATCHDOG_HEARTBEAT_NO.md
+```
+
+## 8. Viktig om scene-bekreftelse
+
+OBS WebSocket-scenebytte skjer asynkront. `SetCurrentProgramScene` kan være sendt korrekt selv om `ObsGetCurrentScene` fortsatt viser gammel scene noen millisekunder etterpå.
+
+Controlleren skal derfor kontrollere sceneendringen på et senere tick og ikke kreve bekreftelse i samme millisekund.
+
+## 9. CometenWebAdmin
+
+Ved bruk av:
+
+```text
+integration/cometenwebadmin/irl-forward.js
+```
+
+skal samme alert ikke også sendes via en separat IRL-sub-action. Det gir doble varsler.
+
+## 10. Feilsøking
+
+Streamer.bot-logg:
+
+```text
+CometenIRL
+```
+
+Ved BELABOX-watchdog kontroller spesielt:
+
+```text
+stats source
+connected
+bitrate
+current scene
+fallback/recovery
+```
+
+Heartbeat-429 håndteres på ROCK 5B+/relay-siden og er ikke en Streamer.bot-feil.
