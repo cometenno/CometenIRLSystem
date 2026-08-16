@@ -18,4 +18,8 @@ return [
 
     // A polled event is reserved for this long before it can be delivered again.
     'lease_seconds' => 30,
+
+    // Heartbeat is diagnostic only. Default receiver heartbeat is every 30 seconds.
+    // Mark the receiver offline only after three missed heartbeats.
+    'receiver_offline_seconds' => 90,
 ];
