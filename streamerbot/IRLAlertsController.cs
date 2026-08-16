@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 // CometenIRLAlerts - main Streamer.bot IRL controller
 //
-// BELABOX ingest watchdog v3
+// BELABOX ingest watchdog v4
 // --------------------------
 // Uses the same principle as NOALBS: monitor the actual BELABOX ingest stats
 // instead of relying on OBS Media Source state or only checking if the ROCK 5B+
@@ -42,6 +42,8 @@ using System.Text.RegularExpressions;
 //   CometenIRL_BelaboxFailChecks       int, default 2
 //   CometenIRL_BelaboxQueryFailChecks  int, default 3
 //   CometenIRL_BelaboxRecoverChecks    int, default 5
+//   CometenIRL_WatchdogLiveOnly        bool, default false while testing
+//                                      Set true after testing is complete
 //
 // Runtime/status globals written by this controller:
 //   CometenIRL_BelaboxConnected
@@ -75,6 +77,7 @@ public class CPHInline
     private const string VarFailChecks = "CometenIRL_BelaboxFailChecks";
     private const string VarQueryFailChecks = "CometenIRL_BelaboxQueryFailChecks";
     private const string VarRecoverChecks = "CometenIRL_BelaboxRecoverChecks";
+    private const string VarWatchdogLiveOnly = "CometenIRL_WatchdogLiveOnly";
 
     private const string VarConnected = "CometenIRL_BelaboxConnected";
     private const string VarBitrate = "CometenIRL_BelaboxBitrate";
@@ -99,8 +102,15 @@ public class CPHInline
             return true;
         }
 
-        // Never switch IRL scenes while OBS is not actually streaming.
-        if (!obsStreaming)
+        // During setup/testing, CometenIRL_WatchdogLiveOnly defaults to false,
+        // so the watchdog can switch OBS scenes even while OBS is offline.
+        //
+        // When testing is complete, set persisted global:
+        //   CometenIRL_WatchdogLiveOnly = true
+        // Then automatic scene switching only runs while OBS is streaming.
+        bool liveOnly = CPH.GetGlobalVar<bool>(VarWatchdogLiveOnly, true);
+
+        if (liveOnly && !obsStreaming)
         {
             ResetRuntimeState();
             SetStatus(false, 0, 0.0, 0, "standby");
@@ -218,8 +228,6 @@ public class CPHInline
         string body;
         if (!TryExtractPublisherObject(json, streamId, out body))
         {
-            // The stats endpoint itself answered correctly but this publisher is
-            // absent. That is a valid OFFLINE state, not a query failure.
             stats.PublisherFound = false;
             stats.Connected = false;
             stats.Bitrate = 0;
