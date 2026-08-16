@@ -2,11 +2,13 @@ using System;
 using System.Globalization;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Threading;
 
-// CometenIRLAlerts - BELABOX ingest watchdog v8
+// CometenIRLAlerts - BELABOX ingest watchdog v9
 // Test mode: CometenIRL_WatchdogLiveOnly missing/false = runs while OBS is offline.
 // Production: set CometenIRL_WatchdogLiveOnly = true.
 // The live-only global may be stored by Streamer.bot as either bool or string.
+// OBS scene switching uses CPH.ObsSetScene(), verified against the configured OBS connection.
 
 public class CPHInline
 {
@@ -409,9 +411,6 @@ public class CPHInline
     private bool SwitchScene(string sceneName, string reason)
     {
         string before = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
-        string escaped = (sceneName ?? string.Empty)
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"");
 
         CPH.LogWarn(
             "CometenIRL DIAG: switching scene reason=" + reason
@@ -420,19 +419,15 @@ public class CPHInline
 
         try
         {
-            string response = CPH.ObsSendRaw(
-                "SetCurrentProgramScene",
-                "{\"sceneName\":\"" + escaped + "\"}",
-                ObsConnection
-            );
+            CPH.ObsSetScene(sceneName, ObsConnection);
+            Thread.Sleep(100);
 
             string after = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
             bool confirmed = string.Equals(after, sceneName, StringComparison.Ordinal);
 
             CPH.LogWarn(
-                "CometenIRL DIAG: scene switch response="
-                + (response ?? "<null>")
-                + " after='" + after + "' confirmed=" + confirmed + "."
+                "CometenIRL DIAG: ObsSetScene after='" + after
+                + "' confirmed=" + confirmed + "."
             );
 
             return confirmed;
