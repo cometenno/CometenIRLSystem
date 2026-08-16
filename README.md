@@ -46,23 +46,23 @@ IRLAlertsController
 - heartbeat fra ROCK 5B+ til relay
 - heartbeat standardisert til 30 sekunder med 429-backoff
 - receiver offline-grense på 90 sekunder
-- BELABOX Cloud ingest-telemetri bekreftet som riktig kilde for video-watchdog
+- BELABOX Cloud ingest-telemetri som kilde for video-watchdog
+- OBS fallback til `IRL - SIGNAL MISTET`
+- automatisk recovery tilbake til `BELABOX SRT` / tidligere scene
+- live-only gating med `CometenIRL_WatchdogLiveOnly=true`
 
 ## Watchdog-status
 
-BELABOX scene-watchdog er fortsatt **test/development** per 16. august 2026.
+**IRLAlertsController v9 er produksjonsverifisert 16. august 2026.**
 
-Bekreftet:
+Bekreftet både i offline testmodus og under faktisk OBS-streaming:
 
-- EU-ingest stats fra `eu.srt.belabox.net`
-- `connected` / `bitrate` / RTT
-- fallback til `IRL - SIGNAL MISTET`
-- reelle USB/GStreamer-bortfall blir synlige som bitrate=0
-
-Gjenstår før produksjonsmodus:
-
-- rydde pending/recovery-state slik at automatisk retur er helt deterministisk
-- deretter aktivere `CometenIRL_WatchdogLiveOnly=true`
+- `CometenIRL_WatchdogLiveOnly=false` lar watchdog kjøre mens OBS ikke streamer, for testing
+- `CometenIRL_WatchdogLiveOnly=true` blokkerer scenebytte når OBS er offline
+- under faktisk streaming gir `connected=false` / `bitrate=0` fallback til `IRL - SIGNAL MISTET`
+- når BELABOX-ingest kommer tilbake og er stabil, går OBS automatisk tilbake til `BELABOX SRT` / tidligere scene
+- scenebytte bruker `CPH.ObsSetScene()` for både fallback og recovery
+- funksjonen er også verifisert under BELABOX bredbåndsmodus-test
 
 Ikke kjør NOALBS eller annen automatisk scene-switcher parallelt med `IRLAlertsController`.
 
@@ -85,6 +85,13 @@ Dette installerer:
 ```text
 cometen-irl-alerts.service
 cometen-irl-heartbeat.service
+```
+
+GPIO/status-LED og root video-probe installeres/oppdateres med:
+
+```bash
+cd ~/CometenIRLAlerts/receiver
+bash install-gpio-leds.sh
 ```
 
 ## Viktige guider
@@ -115,6 +122,23 @@ Relay bruker:
 ```
 
 1 sekund heartbeat ble forkastet fordi webhotellet/nginx svarte med `HTTP 429 Too Many Requests`.
+
+## LED-status
+
+Bekreftet prinsipp:
+
+```text
+grønn = system/online
+blå   = Bluetooth/WPS200
+gul   = video-input finnes
+rød   = BELABOX encoder/output kjører
+```
+
+Gul og rød er separate. `Stop` i BELABOX admin kan derfor slå av rød mens gul fortsatt lyser dersom videokilden fortsatt finnes.
+
+## Kjent hardware-spor
+
+Nattest 16. august 2026 viste reelle USB-videobortfall fra den testede Elgato Facecam-kjeden, blant annet `uvcvideo -71`, URB-feil og eksplisitt USB disconnect. Dette behandles som kamera/kabel/USB-hardware-spor og er separat fra SRT-watchdog-logikken.
 
 ## Sikkerhet
 
