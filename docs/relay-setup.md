@@ -1,55 +1,73 @@
 # Oppsett av relay på webhotellet
 
+Sist oppdatert: 16. august 2026.
+
 ## Krav
 
 - PHP 8.1 eller nyere
 - MySQL eller MariaDB med InnoDB
 - HTTPS-sertifikat
-- Egen mappe på webhotellet, for eksempel `/irl-alerts/`
+- egen mappe på webhotellet, for eksempel `/CometenIRLAlerts_Relay/`
 
 ## 1. Opprett database
 
-Importer `relay/database.sql` i databasen som skal brukes.
+Importer:
+
+```text
+relay/database.sql
+```
+
+Databasen brukes både til alert-events og receiver/heartbeat-status.
 
 ## 2. Last opp PHP-filene
 
-Last opp innholdet i `relay/` til ønsket mappe på webhotellet.
+Last opp innholdet i `relay/` til webhotellet.
 
-Eksempel:
+Minstekrav:
 
 ```text
-public_html/irl-alerts/
-├── acknowledge.php
-├── bootstrap.php
-├── config.php
-├── health.php
-├── poll.php
-└── push.php
+acknowledge.php
+bootstrap.php
+control_result.php
+health.php
+heartbeat.php
+poll.php
+push.php
+receiver_status.php
+config.php
 ```
 
 `database.sql` og `config.example.php` trenger ikke ligge offentlig etter installasjonen.
 
-## 3. Lag konfigurasjonen
+## 3. Lag `config.php`
 
-Kopier `config.example.php` til `config.php` og fyll inn:
+Kopier `config.example.php` til `config.php` og fyll inn database og token.
 
-- PDO DSN
-- databasenavn
-- databasebruker
-- databasepassord
-- sender-token
-- receiver-token
+Eksempel på relevante verdier:
 
-Bruk to forskjellige tilfeldige tokens på minst 32 tegn.
+```php
+'event_ttl_seconds' => 90,
+'lease_seconds' => 30,
+'receiver_offline_seconds' => 90,
+```
 
-`config.php` er ignorert av Git og skal aldri committes.
+`receiver_offline_seconds=90` er tilpasset heartbeat hvert 30. sekund og gir tre tapte heartbeat før receiveren regnes offline.
 
-## 4. Test relayen
+Bruk to forskjellige lange token:
+
+```text
+sender_token
+receiver_token
+```
+
+`config.php` skal aldri committes.
+
+## 4. Test relay
 
 Åpne:
 
 ```text
-https://DITT-DOMENE/irl-alerts/health.php
+https://DITT-DOMENE/CometenIRLAlerts_Relay/health.php
 ```
 
 Forventet svar:
@@ -58,16 +76,55 @@ Forventet svar:
 {"ok":true,"status":"ready"}
 ```
 
-## 5. URL som brukes videre
+## 5. Heartbeat og HTTP 429
+
+`relay/heartbeat.php` har ingen intern rate-limit. Under test ble 1 heartbeat per sekund blokkert av nginx/webhotellet med:
+
+```text
+429 Too Many Requests
+```
+
+Derfor er standard heartbeat nå 30 sekunder. Klienten har også backoff ved 429.
+
+Hvis 429 fortsatt oppstår, kontroller først at receiveren faktisk starter med:
+
+```text
+interval=30.0s
+```
+
+Ikke øk trafikken fra heartbeat for å gjøre status raskere. Primær video-status skal komme fra BELABOX ingest-watchdog, ikke heartbeat.
+
+## 6. Oppdater relay etter GitHub-endringer
+
+`git pull` på ROCK 5B+ oppdaterer **ikke** webhotellet.
+
+Når filer i `relay/` endres, må de nye PHP-filene lastes opp til webhotellet manuelt/FTP.
+
+Ved heartbeat-endringen 16. august 2026 må minst oppdatert:
+
+```text
+receiver_status.php
+```
+
+og `config.php` skal ha:
+
+```php
+'receiver_offline_seconds' => 90,
+```
+
+## 7. URL som brukes videre
 
 Relay base URL er mappen uten filnavn:
 
 ```text
-https://DITT-DOMENE/irl-alerts
+https://DITT-DOMENE/CometenIRLAlerts_Relay
 ```
 
-Denne legges inn både i Streamer.bot og i receiverens `config.json`.
+Denne brukes av Streamer.bot, alert-receiver og heartbeat.
 
-## Viktig
+## Sikkerhet
 
-Ikke deaktiver HTTPS-validering. Hvis webhotellet bruker proxy eller cache, må API-mappen unntas fra caching.
+- bruk HTTPS
+- ikke deaktiver TLS-validering
+- unnta API-mappen fra caching dersom webhotellet/proxyen cacher dynamiske svar
+- ikke eksponer `config.php`, tokens eller databasepassord
