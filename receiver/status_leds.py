@@ -118,6 +118,9 @@ class StatusLedController:
         self.bluetooth_watchdog_service = str(
             self.settings.get("bluetooth_watchdog_service", "cometen-wps200.service")
         ).strip()
+        self.camera_device = str(
+            self.settings.get("camera_device", "/dev/usb_capture")
+        ).strip()
         self.camera_status_url = str(
             self.settings.get("camera_status_url", "http://127.0.0.1/stat")
         ).strip()
@@ -255,6 +258,19 @@ class StatusLedController:
         except Exception:
             return False
 
+    def _camera_active_from_device(self) -> bool | None:
+        if not self.camera_device:
+            return None
+        try:
+            device = Path(self.camera_device)
+            if device.exists():
+                return True
+            if device.is_symlink():
+                return False
+        except Exception:
+            return None
+        return None
+
     def _camera_active_from_stat(self) -> bool | None:
         if not self.camera_status_url:
             return None
@@ -306,10 +322,19 @@ class StatusLedController:
         return False
 
     def _camera_active(self) -> bool | None:
+        device_status = self._camera_active_from_device()
+        if device_status is True:
+            return True
+
         status = self._camera_active_from_stat()
         if status is not None:
             return status
-        return self._camera_active_from_ss()
+
+        status = self._camera_active_from_ss()
+        if status is not None:
+            return status
+
+        return device_status
 
     def _live_process_active(self) -> bool:
         if not self.live_process:
