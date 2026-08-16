@@ -1,36 +1,43 @@
 # Installasjon - Cometen IRL Alerts
 
-Denne guiden beskriver komplett installasjon av Cometen IRL Alerts:
+Dette er den kanoniske installasjonsveiledningen for Cometen IRL Alerts.
+
+Sist oppdatert: 16. august 2026.
+
+Systemet består av fire deler:
 
 ```text
-Streamer.bot på streaming-PC
+Streamer.bot / CometenWebAdmin på streaming-PC
         |
         | HTTPS
         v
 PHP/MySQL-relay på webhotell
         |
-        | HTTPS polling
-        v
-Linux-enhet ved IRL-riggen
+        +-----------------------------+
+        |                             |
+        | alerts / kontroll           | heartbeat/status
+        v                             v
+Python receiver på ROCK 5B+      irl_receiver_status
         |
         v
-Bluetooth-høyttaler via PipeWire
+PipeWire / Bluetooth / lokale WAV-filer
+
+BELABOX Cloud SRT-stats
+        |
+        v
+IRLAlertsController i Streamer.bot
+        |
+        +--> BELABOX SRT
+        +--> IRL - SIGNAL MISTET
 ```
 
-BELABOX brukes fortsatt bare til video, lydopptak, bonding og SRT/SRTLA. Alertsystemet kjører separat og endrer ikke BELABOX.
+BELABOX-video, SRT/SRTLA, alerts, heartbeat og OBS-watchdog ligger i samme prosjekt, men har tydelig separerte roller.
 
-## Bekreftet funksjon
+- **Alert-receiver** leverer lyd og fjernkontroll.
+- **Heartbeat** forteller om ROCK 5B+/receiveren er online.
+- **BELABOX ingest-watchdog** ser på faktisk SRT-ingeststatus og brukes for OBS-failover.
 
-Følgende kjede er testet og bekreftet:
-
-- Streamer.bot sender event til relay
-- Relay lagrer event i MySQL
-- Linux-receiver henter og kvitterer eventen
-- Riktig lokal WAV-fil spilles
-- PipeWire keepalive holder Bluetooth-høyttaleren våken
-- Follow, Sub, Resub, Gifted Sub, Gift Bomb, Bits, Donation, Raid og YouTube Sub støttes
-
-Baseline bekreftet 31. juli 2026.
+Heartbeat er diagnostikk og skal ikke brukes som eneste signal for scenevalg.
 
 ---
 
@@ -40,6 +47,7 @@ Baseline bekreftet 31. juli 2026.
 
 - Windows
 - Streamer.bot
+- OBS Studio med OBS WebSocket aktivt
 - Internett
 - CometenWebAdmin dersom sentral alertintegrasjon skal brukes
 
@@ -47,28 +55,22 @@ Baseline bekreftet 31. juli 2026.
 
 - HTTPS
 - PHP 8 eller nyere
-- MySQL eller MariaDB
-- Tilgang til filopplasting og databaseverktøy, for eksempel FTP og phpMyAdmin
+- MySQL eller MariaDB med InnoDB
+- filopplasting/FTP
+- databaseverktøy, for eksempel phpMyAdmin
 
-## Linux-mottaker
-
-Eksempel:
-
-- Raspberry Pi 5
-- Radxa ROCK 5B+
-- Annen Debian- eller Ubuntu-basert SBC
-
-Må ha:
+## ROCK 5B+ / Linux-enhet
 
 - Python 3
 - Git
+- systemd med user services
 - PipeWire
+- WirePlumber
 - `pw-play`
 - `pw-cat`
-- WirePlumber
-- Bluetooth
+- Bluetooth dersom Bluetooth-høyttaler brukes
 
-Kontroller kommandoene:
+Kontroller:
 
 ```bash
 python3 --version
@@ -79,28 +81,18 @@ wpctl --version
 bluetoothctl --version
 ```
 
-På Debian, Ubuntu og Raspberry Pi OS kan nødvendige pakker vanligvis installeres slik:
+På vanlig Debian/Ubuntu kan nødvendige pakker typisk installeres med:
 
 ```bash
 sudo apt update
 sudo apt install -y git python3 pipewire-bin wireplumber bluez
 ```
 
-Pakkenavn kan variere mellom Linux-distribusjoner.
+BELABOX-imaget kan avvike fra vanlig Debian/Ubuntu. Ikke kjør unødvendige systemoppgraderinger på en fungerende BELABOX uten at dette er planlagt.
 
 ---
 
-# 2. Klon repoet på Linux-enheten
-
-Med SSH:
-
-```bash
-cd ~
-git clone git@github.com:la1ona/CometenIRLAlerts.git
-cd CometenIRLAlerts
-```
-
-Med HTTPS:
+# 2. Klon repoet
 
 ```bash
 cd ~
@@ -108,106 +100,83 @@ git clone https://github.com/la1ona/CometenIRLAlerts.git
 cd CometenIRLAlerts
 ```
 
-Repoet er privat, så GitHub-tilgangen må være konfigurert på enheten.
+Repoet er privat, så GitHub-tilgang må være konfigurert.
 
-Ved senere oppdateringer:
+Senere oppdatering:
 
 ```bash
 cd ~/CometenIRLAlerts
 git pull
 ```
 
+Lokale hemmeligheter skal ligge i filer som ikke committes:
+
+```text
+receiver/config.json
+relay/config.php
+```
+
 ---
 
-# 3. Opprett databasen
+# 3. Opprett database
 
-Opprett en MySQL- eller MariaDB-database på webhotellet.
-
-Importer:
+Opprett MySQL/MariaDB-databasen og importer:
 
 ```text
 relay/database.sql
 ```
 
-SQL-filen oppretter tabellen:
+SQL-filen oppretter tabellene som relayen trenger, inkludert alert-events og receiver/heartbeat-status.
 
-```text
-irl_alert_events
-```
+Via phpMyAdmin:
 
-Med kommandolinje kan importen gjøres slik:
-
-```bash
-mysql -u DATABASEBRUKER -p DATABASENAVN < relay/database.sql
-```
-
-På vanlig webhotell brukes normalt phpMyAdmin:
-
-1. Velg riktig database.
-2. Åpne `Importer`.
-3. Velg `database.sql`.
-4. Start importen.
+1. Velg databasen.
+2. Velg `Importer`.
+3. Velg `relay/database.sql`.
+4. Kjør importen.
 
 ---
 
-# 4. Lag sender- og mottakertoken
+# 4. Lag sender- og receiver-token
 
-Lag to forskjellige, lange tilfeldige token.
-
-På Linux:
+Bruk to forskjellige lange token.
 
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Det første brukes som sender-token. Det andre brukes som receiver-token.
+Det ene brukes som `sender_token`, det andre som `receiver_token`.
 
-Tokenene skal aldri:
-
-- legges i GitHub
-- vises i skjermbilder
-- sendes i Discord eller chat
-- brukes som samme verdi
-
-Ved eksponering må tokenet byttes både i relay og klienten som bruker det.
+Token skal aldri legges i GitHub, skjermbilder eller offentlig chat.
 
 ---
 
 # 5. Installer relay på webhotellet
 
-Last opp innholdet i `relay/` til en egen HTTPS-mappe på webhotellet.
-
-Eksempel:
+Last opp PHP-filene i `relay/` til en egen HTTPS-mappe, for eksempel:
 
 ```text
 https://dittdomene.no/CometenIRLAlerts_Relay
 ```
 
-Relay-mappen skal inneholde minst:
+Relay-mappen skal minst ha:
 
 ```text
 acknowledge.php
 bootstrap.php
-config.php
+control_result.php
 health.php
+heartbeat.php
 poll.php
 push.php
-```
-
-Kopier:
-
-```text
-config.example.php
-```
-
-til:
-
-```text
+receiver_status.php
 config.php
 ```
 
-Fyll inn databaseinformasjon og token lokalt på webhotellet:
+Kopier `config.example.php` til `config.php` på webhotellet.
+
+Eksempel:
 
 ```php
 <?php
@@ -226,550 +195,389 @@ return [
 
     'event_ttl_seconds' => 90,
     'lease_seconds' => 30,
+
+    // Heartbeat sendes normalt hvert 30. sekund.
+    // Tre tapte heartbeat gir offline.
+    'receiver_offline_seconds' => 90,
 ];
 ```
 
-Ikke last opp `config.php` til GitHub.
-
-## Test relay
-
-Åpne:
+Test:
 
 ```text
 https://dittdomene.no/CometenIRLAlerts_Relay/health.php
 ```
 
-Relay skal returnere JSON som viser at tjenesten er klar.
+Forventet svar er JSON med `ok=true`.
 
-Ved databasefeil må DSN, databasenavn, brukernavn, passord og tabellen `irl_alert_events` kontrolleres.
+## Viktig om HTTP 429
+
+Heartbeat skal **ikke** sendes hvert sekund. Det ga `429 Too Many Requests` fra nginx/webhotellet under test.
+
+Ny standard:
+
+```text
+heartbeat_interval_seconds = 30
+receiver_offline_seconds = 90
+```
+
+`heartbeat.py` har i tillegg backoff ved 429 og bruker `Retry-After` dersom serveren sender headeren.
 
 ---
 
-# 6. Installer senderen i Streamer.bot
+# 6. Konfigurer receiver på ROCK 5B+
 
-## Globale variabler
-
-Opprett disse som persistente globale variabler i Streamer.bot:
-
-```text
-CometenIRL_RelayUrl
-CometenIRL_SenderToken
+```bash
+cd ~/CometenIRLAlerts/receiver
+cp config.example.json config.json
+nano config.json
 ```
 
-Eksempelverdi for relay-URL:
+Minimum:
 
-```text
-https://dittdomene.no/CometenIRLAlerts_Relay
+```json
+{
+  "relay_base_url": "https://dittdomene.no/CometenIRLAlerts_Relay",
+  "receiver_token": "DITT_RECEIVER_TOKEN",
+  "poll_interval_seconds": 0.75,
+  "request_timeout_seconds": 10,
+  "batch_size": 5,
+  "heartbeat_receiver_id": "belabox",
+  "heartbeat_interval_seconds": 30,
+  "heartbeat_timeout_seconds": 5,
+  "sounds_directory": "sounds",
+  "default_sound": "test.wav"
+}
 ```
 
-Ikke legg til `/push.php` i globalvariabelen. Senderkoden legger til endepunktet selv.
+Den faktiske `config.example.json` inneholder også lydmapping, remote control og LED-oppsett. Behold feltene du bruker.
 
-`CometenIRL_SenderToken` skal inneholde sender-tokenet fra `relay/config.php`.
+Valider JSON:
 
-## Sender-action
-
-Opprett en action med nøyaktig navn:
-
-```text
-Cometen IRL Notifications - Send
-```
-
-Legg til en C#-sub-action, og lim inn hele innholdet fra:
-
-```text
-streamerbot/CometenIRL_Send.cs
-```
-
-Trykk `Compile` og kontroller at koden kompilerer uten feil.
-
-## Enkel test-action
-
-Opprett midlertidig en test-action med:
-
-```text
-Set Argument
-eventType = follow
-```
-
-```text
-Set Argument
-userName = CometenTest
-```
-
-```text
-Run Action
-Cometen IRL Notifications - Send
-```
-
-Denne testen skal senere gi:
-
-```text
-Playing event ... type=follow user=CometenTest sound=follow.wav
+```bash
+python3 -m json.tool config.json >/dev/null && echo "config.json OK"
 ```
 
 ---
 
-# 7. Sentral CometenWebAdmin-integrasjon
+# 7. Installer lydfiler og test PipeWire
 
-Standardalertene kan videresendes sentralt uten å legge IRL-sub-actions inn i hver Follow-, Sub-, Raid- og Bits-action.
-
-Filen ligger her:
+Legg lokale WAV-filer i:
 
 ```text
-integration/cometenwebadmin/irl-forward.js
+receiver/sounds/
 ```
 
-Kopier filen til samme mappe som CometenWebAdmin sin `alerts.html`.
+Anbefalt:
 
-Legg deretter denne linjen rett før `</body>` i `alerts.html`:
+- WAV
+- PCM
+- 16-bit
+- 44,1 eller 48 kHz
 
-```html
-<script src="irl-forward.js"></script>
+Test:
+
+```bash
+cd ~/CometenIRLAlerts/receiver
+pw-play sounds/test.wav
 ```
 
-Oppdater OBS Browser Source etter lagring.
-
-Integrasjonen krever:
-
-- Streamer.bot WebSocket på `127.0.0.1:8081`
-- action med nøyaktig navn `Cometen IRL Notifications - Send`
-- senderens to globale variabler
-
-Full integrasjonsbeskrivelse:
+Keepalive bruker:
 
 ```text
-integration/cometenwebadmin/README_NO.md
+pw-cat --playback --rate=48000 --channels=2 --format=s16 -
 ```
 
-## Viktig om doble alerts
-
-Når `irl-forward.js` brukes, skal IRL-senderen ikke også kjøres inne i hver enkelt alert-action. Begge deler samtidig gir doble IRL-varsler.
+Ikke legg til `--raw`; enkelte PipeWire-versjoner i BELABOX-oppsettet støtter ikke det valget.
 
 ---
 
-# 8. Koble til Bluetooth-høyttaleren
-
-Start Bluetooth-verktøyet:
+# 8. Bluetooth
 
 ```bash
 bluetoothctl
 ```
 
-Kjør deretter:
+Deretter:
 
 ```text
 power on
 agent on
 default-agent
 scan on
-```
-
-Finn MAC-adressen til høyttaleren og kjør:
-
-```text
 pair XX:XX:XX:XX:XX:XX
 trust XX:XX:XX:XX:XX:XX
 connect XX:XX:XX:XX:XX:XX
 quit
 ```
 
-Kontroller PipeWire:
+Kontroller sink:
 
 ```bash
 wpctl status
 ```
 
-Finn høyttaleren under `Sinks` og sett den som standard:
+Sett standard sink ved behov:
 
 ```bash
 wpctl set-default SINK_ID
 ```
 
-Eksempel:
-
-```bash
-wpctl set-default 65
-```
-
-Sink-ID kan endre seg etter omstart og må kontrolleres med `wpctl status`.
-
----
-
-# 9. Konfigurer receiveren
-
-Gå til receiver-mappen:
-
-```bash
-cd ~/CometenIRLAlerts/receiver
-```
-
-Kopier eksempelkonfigurasjonen:
-
-```bash
-cp config.example.json config.json
-```
-
-Åpne filen:
-
-```bash
-nano config.json
-```
-
-Eksempel:
-
-```json
-{
-  "relay_base_url": "https://dittdomene.no/CometenIRLAlerts_Relay",
-  "receiver_token": "DITT_LANGE_RECEIVER_TOKEN",
-  "poll_interval_seconds": 0.75,
-  "request_timeout_seconds": 10,
-  "batch_size": 5,
-  "sounds_directory": "sounds",
-  "default_sound": "test.wav",
-  "sound_map": {
-    "test": "test.wav",
-    "follow": "follow.wav",
-    "sub": "sub.wav",
-    "resub": "resub.wav",
-    "giftsub": "gifted.wav",
-    "gifted": "gifted.wav",
-    "giftbomb": "giftbomb.wav",
-    "raid": "raid.wav",
-    "bits": "bits.wav",
-    "donation": "donation.wav",
-    "charity": "donation.wav",
-    "youtubesub": "sub.wav",
-    "yt_sub": "sub.wav",
-    "channelpoint": "test.wav",
-    "moderator": "test.wav",
-    "system": "test.wav"
-  },
-  "audio_player": "pw-play {file}",
-  "audio_player_timeout_seconds": 30,
-  "audio_keepalive_enabled": true,
-  "audio_keepalive_command": "pw-cat --playback --rate=48000 --channels=2 --format=s16 -",
-  "audio_keepalive_input": "/dev/zero",
-  "audio_keepalive_restart_seconds": 5
-}
-```
-
-Kontroller at JSON-filen er gyldig:
-
-```bash
-python3 -m json.tool config.json >/dev/null && echo "config.json OK"
-```
-
-## Viktig om `pw-cat`
-
-Ikke bruk `--raw` i keepalive-kommandoen. Enkelte PipeWire-versjoner støtter ikke dette valget og stopper med:
+Det verifiserte headless BELABOX/ROCK 5B+-oppsettet er dokumentert i:
 
 ```text
-pw-cat: unrecognized option '--raw'
-```
-
-Korrekt kompatibel kommando er:
-
-```text
-pw-cat --playback --rate=48000 --channels=2 --format=s16 -
-```
-
-Receiveren mater stille PCM-data fra `/dev/zero` inn gjennom standard input.
-
----
-
-# 10. Installer lydfiler
-
-Legg WAV-filene i:
-
-```text
-receiver/sounds/
-```
-
-Anbefalt format:
-
-- WAV
-- PCM
-- 16-bit
-- stereo
-- 44,1 eller 48 kHz
-
-Standardnavn:
-
-```text
-bits.wav
-donation.wav
-follow.wav
-giftbomb.wav
-gifted.wav
-raid.wav
-resub.wav
-sub.wav
-test.wav
-```
-
-Kontroller filene:
-
-```bash
-cd ~/CometenIRLAlerts/receiver
-ls -lh sounds/*.wav
-```
-
-Test en lyd direkte:
-
-```bash
-pw-play sounds/follow.wav
-```
-
-Lyden skal komme fra Bluetooth-høyttaleren.
-
----
-
-# 11. Start receiveren manuelt
-
-```bash
-cd ~/CometenIRLAlerts/receiver
-python3 receiver.py config.json
-```
-
-Forventet oppstart:
-
-```text
-Cometen IRL Alert Receiver started
-Relay: https://dittdomene.no/CometenIRLAlerts_Relay
-Audio keepalive started through PipeWire
-```
-
-Keepalive-prosessen skal bli stående. Det skal ikke komme en ny restartlinje hvert femte sekund.
-
-Kjør deretter Follow-testen fra Streamer.bot.
-
-Forventet receiver-logg:
-
-```text
-Playing event ... type=follow user=CometenTest sound=follow.wav
-```
-
-Stopp receiveren med:
-
-```text
-Ctrl+C
+docs/BELABOX_ROCK5B_HEADLESS_NO.md
 ```
 
 ---
 
-# 12. Installer autostart
+# 9. Installer user services
 
-Bluetooth- og PipeWire-lyd kjører i brukerens lydsesjon. Bruk derfor user-systemd-tjenesten, ikke den eldre systemtjenesten i `receiver/install.sh`.
+Bruk **user-systemd**, ikke den eldre system-service-installasjonen.
 
-Kjør:
+Installer nå begge tjenestene med én kommando:
 
 ```bash
 cd ~/CometenIRLAlerts/receiver
 bash install-user-service.sh
 ```
 
-Tillat at brukertjenesten starter uten interaktiv innlogging:
+Skriptet installerer og starter:
+
+```text
+cometen-irl-alerts.service
+cometen-irl-heartbeat.service
+```
+
+Aktiver linger én gang:
 
 ```bash
 sudo loginctl enable-linger "$USER"
 ```
 
-Kontroller status:
+Kontroller alert receiver:
 
 ```bash
 systemctl --user status cometen-irl-alerts.service
+journalctl --user -u cometen-irl-alerts.service -n 30 --no-pager
 ```
 
-Følg loggen:
+Kontroller heartbeat:
 
 ```bash
-journalctl --user -u cometen-irl-alerts.service -f
+systemctl --user status cometen-irl-heartbeat.service
+journalctl --user -u cometen-irl-heartbeat.service -n 30 --no-pager
 ```
 
-Start på nytt:
-
-```bash
-systemctl --user restart cometen-irl-alerts.service
-```
-
-Stopp:
-
-```bash
-systemctl --user stop cometen-irl-alerts.service
-```
-
-Aktiver:
-
-```bash
-systemctl --user enable --now cometen-irl-alerts.service
-```
-
-Deaktiver:
-
-```bash
-systemctl --user disable --now cometen-irl-alerts.service
-```
-
-## Bluetooth etter omstart
-
-Høyttaleren må være paret og `trusted`. Dersom den slås på etter at receiveren allerede har startet:
-
-1. Kontroller tilkoblingen med `bluetoothctl`.
-2. Kontroller standard sink med `wpctl status`.
-3. Start receiver-tjenesten på nytt.
-
-```bash
-systemctl --user restart cometen-irl-alerts.service
-```
-
----
-
-# 13. Event- og lydmapping
-
-| CometenWebAdmin-alert | Relay-type | Lokal lyd |
-|---|---|---|
-| Follow | `follow` | `follow.wav` |
-| Sub | `sub` | `sub.wav` |
-| Resub | `resub` | `resub.wav` |
-| Gifted Sub | `gifted` | `gifted.wav` |
-| Gift Bomb | `giftbomb` | `giftbomb.wav` |
-| Bits / Cheer | `bits` | `bits.wav` |
-| Donation / Charity | `donation` | `donation.wav` |
-| Raid | `raid` | `raid.wav` |
-| YouTube Sub | `youtubesub` | `sub.wav` |
-| Test | `test` | `test.wav` |
-
-Nye eventtyper kan legges til senere i:
-
-- `relay/bootstrap.php`
-- `streamerbot/CometenIRL_Send.cs`
-- `receiver/config.json`
-- CometenWebAdmin-integrasjonen
-
----
-
-# 14. Feilsøking
-
-## Receiveren får HTTP 401
-
-Årsak:
-
-- feil receiver-token
-- sender-token og receiver-token er byttet om
-- tokenet i `config.json` er ikke likt receiver-tokenet i relayens `config.php`
-
-Kontroller uten å vise tokenet i skjermbilder.
-
-## Streamer.bot får HTTP 401
-
-Kontroller:
-
-- `CometenIRL_SenderToken`
-- sender-tokenet i `relay/config.php`
-- at variabelen er persistent
-
-## Relay returnerer databasefeil
-
-Kontroller:
-
-- databasevert
-- databasenavn
-- databasebruker
-- databasepassord
-- at `database.sql` er importert
-- at PHP har PDO MySQL
-
-## Ingen lyd
-
-Kjør:
-
-```bash
-wpctl status
-pw-play sounds/follow.wav
-```
-
-Kontroller at Bluetooth-høyttaleren er standard sink.
-
-## Keepalive stopper med exit code 1
-
-Kjør manuelt med verbose logging:
-
-```bash
-pw-cat -v --playback --rate=48000 --channels=2 --format=s16 - < /dev/zero
-```
-
-Ikke bruk `--raw`.
-
-## Advarsel om `/dev/zero`
-
-Oppdater repoet:
-
-```bash
-cd ~/CometenIRLAlerts
-git pull
-```
-
-Ny receiver godtar `/dev/zero` som tegn-enhet.
-
-## Alerten spiller `test.wav` i stedet for riktig lyd
-
-Kontroller:
-
-- eventtypen i Streamer.bot
-- filnavnet i `sound_map`
-- at WAV-filen finnes i `receiver/sounds/`
-- store og små bokstaver i filnavnet
-
-Linux skiller mellom for eksempel `Follow.wav` og `follow.wav`.
-
-## Doble alerts
-
-Dette skjer når både:
-
-- sentral `irl-forward.js`-integrasjon brukes
-- de enkelte alert-actionene også kjører IRL-senderen
-
-Behold bare den sentrale integrasjonen.
-
-## Receiveren kjører, men høyttaleren slår seg av
-
-Kontroller at loggen viser:
+Forventet heartbeat-linje:
 
 ```text
-Audio keepalive started through PipeWire
-```
-
-Kontroller deretter at keepalive-prosessen fortsatt kjører:
-
-```bash
-pgrep -af pw-cat
+Cometen IRL heartbeat started: receiver_id=belabox interval=30.0s
 ```
 
 ---
 
-# 15. Sikkerhet
-
-- Bruk alltid HTTPS.
-- Bruk forskjellige sender- og receiver-token.
-- Ikke legg `relay/config.php` i Git.
-- Ikke legg `receiver/config.json` i Git.
-- Ikke vis token eller databasepassord i skjermbilder.
-- Roter token straks dersom det er eksponert.
-- Gi databasebrukeren bare tilgang til riktig database.
-- Ikke åpne MySQL direkte mot internett dersom webhotellet ikke krever det.
-
----
-
-# 16. Oppdatering
-
-Oppdater Linux-receiveren:
+# 10. Oppdater en eksisterende ROCK 5B+-installasjon
 
 ```bash
 cd ~/CometenIRLAlerts
 git pull
+cd receiver
+bash install-user-service.sh
 systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
 ```
 
-Ved endringer i relay må de oppdaterte PHP-filene lastes opp manuelt til webhotellet. Behold alltid den lokale `config.php` med de virkelige hemmelighetene.
+Kontroller deretter begge loggene.
 
-Ved endringer i senderkoden må innholdet i `streamerbot/CometenIRL_Send.cs` kopieres inn i Streamer.bot-actionen og kompileres på nytt.
+Hvis webhotellets `receiver_status.php` eller andre relay-filer er endret i repoet, må de oppdaterte PHP-filene også lastes opp til webhotellet. `git pull` på ROCK 5B+ oppdaterer ikke webhotellet.
+
+---
+
+# 11. Streamer.bot sender
+
+Opprett persistente globals:
+
+```text
+CometenIRL_RelayUrl
+CometenIRL_SenderToken
+```
+
+Relay-URL er basemappen, uten `/push.php`.
+
+Lag action:
+
+```text
+Cometen IRL Notifications - Send
+```
+
+Lim inn hele:
+
+```text
+streamerbot/CometenIRL_Send.cs
+```
+
+Kompiler.
+
+Test med `eventType=test` eller `eventType=follow` og kjør sender-actionen.
+
+Receiveren skal hente eventen, spille lokal WAV og kvittere den.
+
+---
+
+# 12. Remote control
+
+Fjernkontrollen ligger i:
+
+```text
+streamerbot/CometenIRL_RemoteControl.cs
+```
+
+Den bruker samme relay og støtter blant annet volum/status/testfunksjoner. Detaljer:
+
+```text
+docs/REMOTE_CONTROL_NO.md
+```
+
+Remote control skal være en del av samme Cometen IRL Alerts-oppsett, ikke et separat system.
+
+---
+
+# 13. CometenWebAdmin-integrasjon
+
+Sentral videresending ligger i:
+
+```text
+integration/cometenwebadmin/irl-forward.js
+```
+
+Detaljer:
+
+```text
+integration/cometenwebadmin/README_NO.md
+```
+
+Når `irl-forward.js` brukes, skal den samme alerten ikke også sende IRL-event separat fra en annen action. Det vil gi doble alerts.
+
+---
+
+# 14. BELABOX Cloud scene-watchdog
+
+Watchdog ligger under:
+
+```text
+streamerbot/IRLAlertsController.cs
+```
+
+Målet er:
+
+```text
+signal OK       -> BELABOX SRT
+signal borte    -> IRL - SIGNAL MISTET
+signal stabilt  -> tilbake til BELABOX SRT / tidligere scene
+```
+
+Den bruker BELABOX Cloud ingest-stats i stedet for OBS Media Source state.
+
+For EU-ingesten er korrekt stats-base:
+
+```text
+http://eu.srt.belabox.net:8080
+```
+
+Stream-ID skal **ikke** hardkodes i GitHub.
+
+Streamer.bot globals:
+
+```text
+CometenIRL_BelaboxStreamId
+CometenIRL_BelaboxStatsBaseUrl = http://eu.srt.belabox.net:8080
+CometenIRL_FallbackScene = IRL - SIGNAL MISTET
+CometenIRL_DefaultReturnScene = BELABOX SRT
+```
+
+Testmodus:
+
+```text
+CometenIRL_WatchdogLiveOnly = false
+```
+
+Produksjon:
+
+```text
+CometenIRL_WatchdogLiveOnly = true
+```
+
+## Status per 16. august 2026
+
+Watchdog er fortsatt **test/development**. Ingestdeteksjon og fallback er bekreftet, men recovery/pending-state skal ferdigstilles før `WatchdogLiveOnly=true` regnes som produksjonsklar.
+
+Ikke bruk watchdog som produksjonskritisk sceneautoritet før denne statusen er oppdatert i repoet.
+
+Full dokumentasjon:
+
+```text
+docs/WATCHDOG_HEARTBEAT_NO.md
+```
+
+---
+
+# 15. USB/video-feilsøking
+
+Nattest viste reelle videobortfall samtidig med blant annet:
+
+```text
+uvcvideo: Non-zero status (-71) in video completion handler
+uvcvideo: Failed to resubmit video URB (-1)
+gstreamer error from v4l2src0
+```
+
+Det ble også observert eksplisitt USB-disconnect på Elgato Facecam. Dette er et input/hardware-spor og er separat fra heartbeat/429-problemet.
+
+Kun nye USB/video-hendelser:
+
+```bash
+sudo journalctl -kf -n 0 | grep -Ei 'uvc|usb|video|v4l2|xhci|disconnect|reset|error'
+```
+
+Videre fysisk kameratest avventes når annet kamera/kabel er tilgjengelig.
+
+---
+
+# 16. LED-status
+
+LED-modulen ligger i receiver-delen og dokumenteres i:
+
+```text
+docs/STATUS_LEDS_NO.md
+```
+
+Statusverdier fra controller/receiver skal gjenbrukes av LED-systemet i stedet for å lage egne konkurrerende watchdogs.
+
+---
+
+# 17. Sikkerhet
+
+Ikke commit:
+
+```text
+relay/config.php
+receiver/config.json
+```
+
+Ikke hardkod:
+
+- sender-token
+- receiver-token
+- databasepassord
+- BELABOX stream-ID
+
+Ved tokenlekkasje skal tokenet roteres både på relay og klienten som bruker det.
+
+---
+
+# 18. Designregel for prosjektet
+
+Cometen IRL Alerts er hovedmodulen for IRL-funksjoner. Alertlevering, remote control, heartbeat, LED-status, BELABOX/SRT-watchdog, OBS-failover og videre diagnostikk skal samles og koordineres her.
+
+Det skal ikke kjøres en separat NOALBS-sceneautoritet parallelt med `IRLAlertsController`, fordi to automatiske scene-switchere kan konkurrere om OBS.
