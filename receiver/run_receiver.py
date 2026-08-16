@@ -49,23 +49,25 @@ def build_expanded_status(config: dict[str, Any]) -> str:
 
     status_probe = StatusLedController(config)
     try:
-        camera = status_probe._camera_active()
-    except Exception:
-        camera = None
-
-    try:
         encoder = status_probe._live_process_active()
     except Exception:
         encoder = False
 
-    if camera is True:
-        camera_text = "RTMP OK"
-    elif camera is False:
-        camera_text = "RTMP WAIT"
-    else:
-        camera_text = "RTMP ?"
+    try:
+        video = status_probe._camera_active(encoder)
+    except Exception:
+        video = None
 
-    if encoder and camera is True:
+    if video is True:
+        video_text = "VIDEO OK"
+    elif encoder:
+        video_text = "VIDEO LOST"
+    elif video is False:
+        video_text = "VIDEO OFF"
+    else:
+        video_text = "VIDEO ?"
+
+    if encoder and video is True:
         live_text = "LIVE OK"
     elif encoder:
         live_text = "ENC ON"
@@ -74,7 +76,7 @@ def build_expanded_status(config: dict[str, Any]) -> str:
 
     return (
         f"IRL: SYS OK | {read_temperature()} {read_fan_state()} | {audio} | "
-        f"{camera_text} | {live_text} | WiFi {wifi} | Up {uptime}"
+        f"{video_text} | {live_text} | WiFi {wifi} | Up {uptime}"
     )[:220]
 
 
