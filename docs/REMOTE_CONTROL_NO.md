@@ -259,3 +259,14 @@ IRL: test-alert spilt av på WPS200
 ## Status
 
 v0.4.2 legger til bekreftet `!alerttest`. Status, volum, mute/unmute og returkanalen er ellers uendret.
+
+### Verifisert 16. august 2026
+
+Følgende ble testet ende-til-ende fra Twitch-chat via Streamer.bot og relay til BELABOX/WPS200, med bekreftet svar tilbake i Twitch-chat:
+
+- `!irlstatus` - statusretur fungerer, inkludert korrekt `WiFi offline` når ruteren/nettet er nede
+- `!alerttest` - lokal testlyd spilles av på WPS200 og bekreftes i chat
+- `!mute` - WPS200 blir muted og bekreftes i chat
+- `!unmute` - WPS200 blir unmuted og bekreftes i chat
+
+Volumkommandoen gjenstår som siste praktiske remote-control-test i denne testserien.
