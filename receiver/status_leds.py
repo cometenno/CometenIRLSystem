@@ -228,6 +228,7 @@ class StatusLedController:
             )
         except Exception:
             return False
+
         blocks = re.split(
             r"(?=^\s*id\s+\d+,\s+type\s+PipeWire:Interface:Node/3\s*$)",
             completed.stdout,
@@ -275,27 +276,6 @@ class StatusLedController:
             result.append(Path(value))
         return result
 
-    def _process_pids(self, process_name: str) -> list[int]:
-        if not process_name:
-            return []
-        pids: list[int] = []
-        proc = Path("/proc")
-        try:
-            entries = list(proc.iterdir())
-        except Exception:
-            return []
-
-        for entry in entries:
-            if not entry.name.isdigit():
-                continue
-            try:
-                comm = (entry / "comm").read_text(encoding="utf-8").strip()
-            except Exception:
-                continue
-            if comm == process_name:
-                pids.append(int(entry.name))
-        return pids
-
     @staticmethod
     def _resolved_device(path: Path) -> str | None:
         try:
@@ -304,6 +284,63 @@ class StatusLedController:
             return os.path.realpath(str(path))
         except Exception:
             return None
+
+    @staticmethod
+    def _read_proc_name(pid: int) -> str:
+        try:
+            return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _read_proc_ppid(pid: int) -> int | None:
+        try:
+            for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8").splitlines():
+                if line.startswith("PPid:"):
+                    return int(line.split(":", 1)[1].strip())
+        except Exception:
+            pass
+        return None
+
+    def _all_processes(self) -> tuple[dict[int, str], dict[int, int]]:
+        names: dict[int, str] = {}
+        parents: dict[int, int] = {}
+        try:
+            entries = list(Path("/proc").iterdir())
+        except Exception:
+            return names, parents
+
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            name = self._read_proc_name(pid)
+            if not name:
+                continue
+            names[pid] = name
+            ppid = self._read_proc_ppid(pid)
+            if ppid is not None:
+                parents[pid] = ppid
+        return names, parents
+
+    def _process_tree_pids(self, process_name: str) -> list[int]:
+        if not process_name:
+            return []
+
+        names, parents = self._all_processes()
+        roots = {pid for pid, name in names.items() if name == process_name}
+        if not roots:
+            return []
+
+        tree = set(roots)
+        changed = True
+        while changed:
+            changed = False
+            for pid, ppid in parents.items():
+                if pid not in tree and ppid in tree:
+                    tree.add(pid)
+                    changed = True
+        return sorted(tree)
 
     def _process_has_video_device_open(self, pids: list[int], devices: list[Path]) -> bool | None:
         resolved_devices = {
@@ -339,16 +376,14 @@ class StatusLedController:
             return False
         return None
 
-    def _camera_active_from_local_pipeline(self, live_process: bool) -> bool | None:
+    def _camera_active_from_local_pipeline(self, process_tree: list[int]) -> bool | None:
         devices = self._candidate_video_devices()
         existing = [device for device in devices if self._resolved_device(device) is not None]
         if not existing:
             return None
-        if not live_process:
+        if not process_tree:
             return False
-
-        pids = self._process_pids(self.live_process)
-        return self._process_has_video_device_open(pids, existing)
+        return self._process_has_video_device_open(process_tree, existing)
 
     def _camera_active_from_stat(self) -> bool | None:
         if not self.camera_status_url:
@@ -400,33 +435,47 @@ class StatusLedController:
             return True
         return False
 
-    def _camera_active(self, live_process: bool | None = None) -> bool | None:
-        if live_process is None:
-            live_process = self._live_process_active()
+    def _video_state(self) -> tuple[bool | None, bool, list[int]]:
+        process_tree = self._process_tree_pids(self.live_process)
+        live_process = bool(process_tree)
 
-        local_status = self._camera_active_from_local_pipeline(live_process)
+        local_status = self._camera_active_from_local_pipeline(process_tree)
         if local_status is not None:
-            return local_status
+            return local_status, live_process, process_tree
 
         status = self._camera_active_from_stat()
         if status is not None:
-            return status
+            return status, live_process, process_tree
 
-        return self._camera_active_from_ss()
+        return self._camera_active_from_ss(), live_process, process_tree
+
+    def _camera_active(self, live_process: bool | None = None) -> bool | None:
+        camera, _, _ = self._video_state()
+        return camera
 
     def _live_process_active(self) -> bool:
-        if not self.live_process:
-            return False
-        return bool(self._process_pids(self.live_process))
+        return bool(self._process_tree_pids(self.live_process))
 
-    def _log_video_transition(self, camera: bool | None, live_process: bool) -> None:
+    def _log_video_transition(
+        self,
+        camera: bool | None,
+        live_process: bool,
+        process_tree: list[int],
+    ) -> None:
         if camera == self._last_video_state:
             return
         self._last_video_state = camera
+
         if camera is True:
-            LOG.info("Video signal active: local BELABOX video device is open by %s", self.live_process)
+            LOG.info(
+                "Video signal active: BELABOX video pipeline has device open (process tree: %s)",
+                ",".join(str(pid) for pid in process_tree) or "none",
+            )
         elif camera is False and live_process:
-            LOG.warning("Video signal missing: %s is running but no active video device is open", self.live_process)
+            LOG.warning(
+                "Video signal missing: %s process tree is running but no active video device is open",
+                self.live_process,
+            )
         elif camera is False:
             LOG.info("Video signal inactive: encoder is stopped")
         else:
@@ -436,8 +485,7 @@ class StatusLedController:
         online = self._relay_reachable()
         bluetooth = self._bluetooth_sink_connected()
         watchdog = self._watchdog_active()
-        live_process = self._live_process_active()
-        camera = self._camera_active(live_process)
+        camera, live_process, process_tree = self._video_state()
 
         if online:
             self._ever_online = True
@@ -450,7 +498,8 @@ class StatusLedController:
         else:
             self._set_pattern("blue", SLOW if watchdog else FAST)
 
-        self._log_video_transition(camera, live_process)
+        self._log_video_transition(camera, live_process, process_tree)
+
         if camera is True:
             self._set_pattern("yellow", ON)
         elif live_process:
@@ -494,6 +543,7 @@ class StatusLedController:
             LOG.warning("Status LEDs disabled: %s", exception)
             self.enabled = False
             return
+
         LOG.info(
             "Status LEDs enabled: green=%s blue=%s yellow=%s red=%s",
             self.line_names["green"],
@@ -501,11 +551,13 @@ class StatusLedController:
             self.line_names["yellow"],
             self.line_names["red"],
         )
+
         if self.lamp_test_enabled:
             try:
                 self.lamp_test()
             except Exception:
                 LOG.exception("Status LED lamp test failed")
+
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run,
