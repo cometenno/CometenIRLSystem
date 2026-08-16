@@ -51,6 +51,7 @@
     "lamp_test_seconds": 0.3,
     "bluetooth_sink_match": "WPS200",
     "bluetooth_watchdog_service": "cometen-wps200.service",
+    "camera_device": "/dev/usb_capture",
     "camera_status_url": "http://127.0.0.1/stat",
     "camera_app": "publish",
     "camera_stream": "live",
