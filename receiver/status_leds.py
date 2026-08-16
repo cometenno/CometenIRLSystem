@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import socket
@@ -129,7 +130,7 @@ class StatusLedController:
         self.live_process = str(self.settings.get("live_process", "belacoder")).strip()
 
         self._outputs: dict[str, GpioOutput] = {}
-        self._patterns = {"green": SLOW, "blue": SLOW, "yellow": SLOW, "red": OFF}
+        self._patterns = {"green": SLOW, "blue": SLOW, "yellow": OFF, "red": OFF}
         self._last_rendered: dict[str, bool | None] = {
             "green": None,
             "blue": None,
@@ -140,7 +141,7 @@ class StatusLedController:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._ever_online = False
-        self._ever_camera = False
+        self._last_video_state: bool | None = None
 
     def _open_gpio(self) -> None:
         opened: dict[str, GpioOutput] = {}
@@ -258,18 +259,96 @@ class StatusLedController:
         except Exception:
             return False
 
-    def _camera_active_from_device(self) -> bool | None:
-        if not self.camera_device:
-            return None
+    def _candidate_video_devices(self) -> list[Path]:
+        candidates: list[str] = []
+        if self.camera_device:
+            candidates.append(self.camera_device)
+        candidates.extend(("/dev/usb_capture", "/dev/hdmirx", "/dev/hdmi_capture"))
+
+        result: list[Path] = []
+        seen: set[str] = set()
+        for value in candidates:
+            value = value.strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(Path(value))
+        return result
+
+    def _process_pids(self, process_name: str) -> list[int]:
+        if not process_name:
+            return []
+        pids: list[int] = []
+        proc = Path("/proc")
         try:
-            device = Path(self.camera_device)
-            if device.exists():
-                return True
-            if device.is_symlink():
-                return False
+            entries = list(proc.iterdir())
+        except Exception:
+            return []
+
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                comm = (entry / "comm").read_text(encoding="utf-8").strip()
+            except Exception:
+                continue
+            if comm == process_name:
+                pids.append(int(entry.name))
+        return pids
+
+    @staticmethod
+    def _resolved_device(path: Path) -> str | None:
+        try:
+            if not path.exists():
+                return None
+            return os.path.realpath(str(path))
         except Exception:
             return None
+
+    def _process_has_video_device_open(self, pids: list[int], devices: list[Path]) -> bool | None:
+        resolved_devices = {
+            resolved
+            for device in devices
+            if (resolved := self._resolved_device(device)) is not None
+        }
+        if not resolved_devices:
+            return False
+        if not pids:
+            return False
+
+        inspected_any = False
+        for pid in pids:
+            fd_dir = Path(f"/proc/{pid}/fd")
+            try:
+                fds = list(fd_dir.iterdir())
+                inspected_any = True
+            except PermissionError:
+                continue
+            except Exception:
+                continue
+
+            for fd in fds:
+                try:
+                    target = os.path.realpath(str(fd))
+                except Exception:
+                    continue
+                if target in resolved_devices:
+                    return True
+
+        if inspected_any:
+            return False
         return None
+
+    def _camera_active_from_local_pipeline(self, live_process: bool) -> bool | None:
+        devices = self._candidate_video_devices()
+        existing = [device for device in devices if self._resolved_device(device) is not None]
+        if not existing:
+            return None
+        if not live_process:
+            return False
+
+        pids = self._process_pids(self.live_process)
+        return self._process_has_video_device_open(pids, existing)
 
     def _camera_active_from_stat(self) -> bool | None:
         if not self.camera_status_url:
@@ -321,45 +400,44 @@ class StatusLedController:
             return True
         return False
 
-    def _camera_active(self) -> bool | None:
-        device_status = self._camera_active_from_device()
-        if device_status is True:
-            return True
+    def _camera_active(self, live_process: bool | None = None) -> bool | None:
+        if live_process is None:
+            live_process = self._live_process_active()
+
+        local_status = self._camera_active_from_local_pipeline(live_process)
+        if local_status is not None:
+            return local_status
 
         status = self._camera_active_from_stat()
         if status is not None:
             return status
 
-        status = self._camera_active_from_ss()
-        if status is not None:
-            return status
-
-        return device_status
+        return self._camera_active_from_ss()
 
     def _live_process_active(self) -> bool:
         if not self.live_process:
             return False
-        pgrep = shutil.which("pgrep")
-        if pgrep is None:
-            return False
-        try:
-            return subprocess.run(
-                [pgrep, "-x", self.live_process],
-                check=False,
-                timeout=5,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ).returncode == 0
-        except Exception:
-            return False
+        return bool(self._process_pids(self.live_process))
+
+    def _log_video_transition(self, camera: bool | None, live_process: bool) -> None:
+        if camera == self._last_video_state:
+            return
+        self._last_video_state = camera
+        if camera is True:
+            LOG.info("Video signal active: local BELABOX video device is open by %s", self.live_process)
+        elif camera is False and live_process:
+            LOG.warning("Video signal missing: %s is running but no active video device is open", self.live_process)
+        elif camera is False:
+            LOG.info("Video signal inactive: encoder is stopped")
+        else:
+            LOG.info("Video signal state unknown")
 
     def _probe(self) -> None:
         online = self._relay_reachable()
         bluetooth = self._bluetooth_sink_connected()
         watchdog = self._watchdog_active()
-        camera = self._camera_active()
         live_process = self._live_process_active()
+        camera = self._camera_active(live_process)
 
         if online:
             self._ever_online = True
@@ -372,13 +450,13 @@ class StatusLedController:
         else:
             self._set_pattern("blue", SLOW if watchdog else FAST)
 
+        self._log_video_transition(camera, live_process)
         if camera is True:
-            self._ever_camera = True
             self._set_pattern("yellow", ON)
-        elif camera is False:
-            self._set_pattern("yellow", FAST if self._ever_camera else SLOW)
+        elif live_process:
+            self._set_pattern("yellow", FAST)
         else:
-            self._set_pattern("yellow", SLOW)
+            self._set_pattern("yellow", OFF)
 
         if live_process and camera is True:
             self._set_pattern("red", ON)
