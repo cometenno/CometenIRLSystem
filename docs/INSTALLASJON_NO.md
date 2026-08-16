@@ -469,7 +469,7 @@ Watchdog ligger under:
 streamerbot/IRLAlertsController.cs
 ```
 
-Gjeldende testgodkjente controller er **v9**.
+Gjeldende produksjonsverifiserte controller er **v9**.
 
 Målet er:
 
@@ -512,6 +512,8 @@ CometenIRL_WatchdogLiveOnly = true
 
 Controlleren aksepterer denne globalen både som ekte bool og som teksten `"true"` / `"false"`.
 
+I produksjon skal `true` brukes. Da er watchdog-sceneautoriteten deaktivert når OBS ikke streamer og aktiv når OBS faktisk streamer.
+
 ## OBS-scenebytte
 
 **v9 bruker `CPH.ObsSetScene()` for både fallback og recovery.**
@@ -522,9 +524,9 @@ Ikke erstatt `ObsSetScene()` med `ObsSendRaw()` uten ny eksplisitt test.
 
 ## Status per 16. august 2026
 
-**Fallback og recovery i v9 er testgodkjent i OBS-offline testmodus.**
+**IRLAlertsController v9 er produksjonsverifisert.**
 
-Bekreftet flere ganger:
+Bekreftet flere ganger i testmodus:
 
 ```text
 BELABOX feed PÅ
@@ -540,9 +542,28 @@ Start i BELABOX admin
 -> BELABOX SRT
 ```
 
-Dermed er både signal-loss, fallback og automatisk recovery bekreftet fungerende.
+Produksjonsmodus ble deretter verifisert med:
 
-Før `CometenIRL_WatchdogLiveOnly=true` regnes som endelig produksjonsverifisert skal det gjøres én siste kontroll under en faktisk OBS-live-stream. Det er kun live-only-gating som gjenstår å bekrefte; scene- og signal-logikken er testgodkjent.
+```text
+CometenIRL_WatchdogLiveOnly = true
+```
+
+Bekreftet:
+
+```text
+OBS offline + BELABOX feed av
+-> ingen automatisk scene-switch
+
+OBS streaming + BELABOX feed av
+-> IRL - SIGNAL MISTET
+
+OBS streaming + BELABOX feed på igjen
+-> automatisk tilbake til BELABOX SRT
+```
+
+Live-testen ble også kjørt i BELABOX bredbåndsmodus og fungerte som forventet.
+
+Dermed er signal-loss, fallback, automatisk recovery og live-only-gating bekreftet fungerende i produksjonsoppsettet.
 
 Full dokumentasjon:
 
