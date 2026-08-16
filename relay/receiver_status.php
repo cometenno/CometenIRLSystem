@@ -13,7 +13,7 @@ if ($receiverId === '' || preg_match('/^[a-z0-9._-]{1,64}$/', $receiverId) !== 1
     json_response(422, ['ok' => false, 'error' => 'invalid_receiver_id']);
 }
 
-$offlineSeconds = max(3, min(30, (int)($config['receiver_offline_seconds'] ?? 5)));
+$offlineSeconds = max(30, min(300, (int)($config['receiver_offline_seconds'] ?? 90)));
 $pdo = database($config);
 
 try {
