@@ -4,10 +4,11 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading;
 
-// CometenIRLAlerts - BELABOX ingest watchdog v9
+// CometenIRLAlerts - BELABOX ingest watchdog v10
 // Test mode: CometenIRL_WatchdogLiveOnly missing/false = runs while OBS is offline.
 // Production: set CometenIRL_WatchdogLiveOnly = true.
-// The live-only global may be stored by Streamer.bot as either bool or string.
+// CometenIRL_WatchdogArmed controls scene authority independently of telemetry.
+// Missing CometenIRL_WatchdogArmed defaults to true for backwards compatibility.
 // OBS scene switching uses CPH.ObsSetScene(), verified against the configured OBS connection.
 
 public class CPHInline
@@ -30,6 +31,7 @@ public class CPHInline
     private const string VarQueryFailChecks = "CometenIRL_BelaboxQueryFailChecks";
     private const string VarRecoverChecks = "CometenIRL_BelaboxRecoverChecks";
     private const string VarLiveOnly = "CometenIRL_WatchdogLiveOnly";
+    private const string VarArmed = "CometenIRL_WatchdogArmed";
 
     private const string VarConnected = "CometenIRL_BelaboxConnected";
     private const string VarBitrate = "CometenIRL_BelaboxBitrate";
@@ -53,11 +55,13 @@ public class CPHInline
 
         bool obsStreaming = CPH.ObsIsStreaming(ObsConnection);
         bool liveOnly = GetBool(VarLiveOnly, false);
+        bool armed = GetBool(VarArmed, true);
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
 
         CPH.LogInfo(
             "CometenIRL DIAG: tick obsStreaming=" + obsStreaming
             + " liveOnly=" + liveOnly
+            + " armed=" + armed
             + " scene='" + currentScene + "'."
         );
 
@@ -72,7 +76,7 @@ public class CPHInline
         string statsBaseUrl = GetString(VarStatsBaseUrl, DefaultStatsBaseUrl);
         string fallbackScene = GetString(VarFallbackScene, DefaultFallbackScene);
 
-        if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
+        if (armed && string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
         {
             EnsureReturnScene();
         }
@@ -89,6 +93,17 @@ public class CPHInline
 
         if (!TryGetStats(statsBaseUrl, streamId, out stats, out error))
         {
+            SetStatus(false, 0, 0.0, 0, "stats-unavailable");
+
+            if (!armed)
+            {
+                ResetRuntime();
+                CPH.LogInfo(
+                    "CometenIRL Watchdog: scene control is disarmed; stats query failed but no fallback will be triggered."
+                );
+                return true;
+            }
+
             HandleQueryFailure(
                 error,
                 GetPositiveInt(VarQueryFailChecks, DefaultQueryFailChecks),
@@ -116,6 +131,15 @@ public class CPHInline
             + " dropped=" + stats.DroppedPackets
             + " signalOk=" + signalOk + "."
         );
+
+        if (!armed)
+        {
+            ResetRuntime();
+            CPH.LogInfo(
+                "CometenIRL Watchdog: telemetry updated; scene control is disarmed, so failover/recovery is skipped."
+            );
+            return true;
+        }
 
         if (signalOk)
         {
