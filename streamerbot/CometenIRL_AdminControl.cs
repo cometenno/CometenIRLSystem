@@ -1,9 +1,10 @@
 using System;
 using System.Threading;
 
-// CometenIRLAlerts - local OBS/admin control v1.1
-// This action is intentionally local to Streamer.bot/OBS. It does not use the BELABOX relay.
+// CometenIRLAlerts - local OBS/admin control v1.2
+// Local Streamer.bot/OBS control. Does not use the BELABOX relay.
 // Recommended command permissions: Broadcaster only.
+// Language is persistent in CometenIRL_Language and never changes automatically.
 
 public class CPHInline
 {
@@ -16,14 +17,20 @@ public class CPHInline
     private const string DefaultEndingScene = "IRL - ENDING";
     private const string DefaultNormalRewardGroup = "NORMAL";
     private const string DefaultIrlRewardGroup = "IRL";
+    private const string EndAutoStopAction = "CometenIRL_EndAutoStop";
+    private const int DefaultEndingSeconds = 25;
 
     private const string VarWatchdogArmed = "CometenIRL_WatchdogArmed";
     private const string VarIrlMode = "CometenIRL_IrlMode";
+    private const string VarLanguage = "CometenIRL_Language";
     private const string VarStartingSoonScene = "CometenIRL_StartingSoonScene";
     private const string VarSrtScene = "CometenIRL_DefaultReturnScene";
     private const string VarFallbackScene = "CometenIRL_FallbackScene";
     private const string VarBrbScene = "CometenIRL_BrbScene";
     private const string VarEndingScene = "CometenIRL_EndingScene";
+    private const string VarEndingSeconds = "CometenIRL_EndingSeconds";
+    private const string VarEndPending = "CometenIRL_EndPending";
+    private const string VarEndSequence = "CometenIRL_EndSequence";
     private const string VarManageRewards = "CometenIRL_ManageRewards";
     private const string VarNormalRewardGroup = "CometenIRL_NormalRewardGroup";
     private const string VarIrlRewardGroup = "CometenIRL_IrlRewardGroup";
@@ -32,7 +39,10 @@ public class CPHInline
     {
         if (!CPH.ObsIsConnected(ObsConnection))
         {
-            SendChat("IRL: OBS er ikke koblet til Streamer.bot.");
+            SendChat(L(
+                "IRL: OBS er ikke koblet til Streamer.bot.",
+                "IRL: OBS is not connected to Streamer.bot."
+            ));
             CPH.LogError("CometenIRL Admin: OBS connection 0 is not connected.");
             return false;
         }
@@ -45,7 +55,7 @@ public class CPHInline
         string parameter;
         if (!ResolveAction(explicitAction, command, rawInput, out action, out parameter))
         {
-            SendChat("IRL: ukjent admin-kommando.");
+            SendChat(L("IRL: ukjent admin-kommando.", "IRL: unknown admin command."));
             return false;
         }
 
@@ -59,21 +69,26 @@ public class CPHInline
             case "stop": return StopIrl();
             case "scene": return SetSceneAlias(parameter);
             case "points": return SetPointsMode(parameter);
+            case "language": return SetLanguage(parameter);
             default:
-                SendChat("IRL: ukjent admin-kommando.");
+                SendChat(L("IRL: ukjent admin-kommando.", "IRL: unknown admin command."));
                 return false;
         }
     }
 
     private bool StartIrl()
     {
+        CancelPendingEnd();
         SetArmed(false);
         CPH.SetGlobalVar(VarIrlMode, true, true);
 
         string scene = GetString(VarStartingSoonScene, DefaultStartingSoonScene);
         if (!SwitchScene(scene))
         {
-            SendChat("IRL: kunne ikke bytte til Starting Soon - streamen ble ikke startet.");
+            SendChat(L(
+                "IRL: kunne ikke bytte til Starting Soon - streamen ble ikke startet.",
+                "IRL: could not switch to Starting Soon - stream was not started."
+            ));
             return false;
         }
 
@@ -85,7 +100,10 @@ public class CPHInline
 
         if (CPH.ObsIsStreaming(ObsConnection))
         {
-            SendChat("IRL: Starting Soon aktiv - streamen var allerede live. Bruk !irlgo når du er klar.");
+            SendChat(L(
+                "IRL: Starting Soon aktiv - streamen var allerede live. Bruk !irlgo når du er klar.",
+                "IRL: Starting Soon active - stream was already live. Use !irlgo when ready."
+            ));
             return true;
         }
 
@@ -98,7 +116,10 @@ public class CPHInline
             CPH.LogError("CometenIRL Admin: ObsStartStreaming failed: " + ex.Message);
             SetRewardsMode(false, false);
             CPH.SetGlobalVar(VarIrlMode, false, true);
-            SendChat("IRL: OBS klarte ikke å starte streamen.");
+            SendChat(L(
+                "IRL: OBS klarte ikke å starte streamen.",
+                "IRL: OBS could not start the stream."
+            ));
             return false;
         }
 
@@ -106,72 +127,134 @@ public class CPHInline
         {
             SetRewardsMode(false, false);
             CPH.SetGlobalVar(VarIrlMode, false, true);
-            SendChat("IRL: startkommando sendt, men OBS rapporterer ikke live.");
+            SendChat(L(
+                "IRL: startkommando sendt, men OBS rapporterer ikke live.",
+                "IRL: start command sent, but OBS does not report streaming."
+            ));
             return false;
         }
 
-        SendChat("IRL: Starting Soon - stream startet. Bruk !irlgo når du er klar.");
+        SendChat(L(
+            "IRL: Starting Soon - stream startet. Bruk !irlgo når du er klar.",
+            "IRL: Starting Soon - stream started. Use !irlgo when ready."
+        ));
         return true;
     }
 
     private bool GoLiveScene()
     {
+        CancelPendingEnd();
         string scene = GetString(VarSrtScene, DefaultSrtScene);
         if (!SwitchScene(scene))
         {
-            SendChat("IRL: kunne ikke bytte til BELABOX SRT - watchdog ble ikke aktivert.");
+            SendChat(L(
+                "IRL: kunne ikke bytte til BELABOX SRT - watchdog ble ikke aktivert.",
+                "IRL: could not switch to BELABOX SRT - watchdog was not armed."
+            ));
             return false;
         }
 
         SetArmed(true);
-        SendChat("IRL: BELABOX SRT - watchdog aktiv.");
+        SendChat(L(
+            "IRL: BELABOX SRT - watchdog aktiv.",
+            "IRL: BELABOX SRT - watchdog armed."
+        ));
         return true;
     }
 
     private bool GoBrb()
     {
+        CancelPendingEnd();
         SetArmed(false);
         string scene = GetString(VarBrbScene, DefaultBrbScene);
         if (!SwitchScene(scene))
         {
-            SendChat("IRL: kunne ikke bytte til BRB.");
+            SendChat(L("IRL: kunne ikke bytte til BRB.", "IRL: could not switch to BRB."));
             return false;
         }
 
-        SendChat("IRL: BRB - watchdog pauset.");
+        SendChat(L("IRL: BRB - watchdog pauset.", "IRL: BRB - watchdog paused."));
         return true;
     }
 
     private bool BackToSrt()
     {
+        CancelPendingEnd();
         string scene = GetString(VarSrtScene, DefaultSrtScene);
         if (!SwitchScene(scene))
         {
-            SendChat("IRL: kunne ikke gå tilbake til BELABOX SRT - watchdog ble ikke aktivert.");
+            SendChat(L(
+                "IRL: kunne ikke gå tilbake til BELABOX SRT - watchdog ble ikke aktivert.",
+                "IRL: could not return to BELABOX SRT - watchdog was not armed."
+            ));
             return false;
         }
 
         SetArmed(true);
-        SendChat("IRL: tilbake på BELABOX SRT - watchdog aktiv.");
+        SendChat(L(
+            "IRL: tilbake på BELABOX SRT - watchdog aktiv.",
+            "IRL: back on BELABOX SRT - watchdog armed."
+        ));
         return true;
     }
 
     private bool GoEnding()
     {
+        CancelPendingEnd();
         SetArmed(false);
+
         string scene = GetString(VarEndingScene, DefaultEndingScene);
         if (!SwitchScene(scene))
         {
-            SendChat("IRL: kunne ikke bytte til Ending.");
+            SendChat(L("IRL: kunne ikke bytte til Ending.", "IRL: could not switch to Ending."));
             return false;
         }
 
-        SendChat("IRL: Ending - watchdog pauset. Bruk !irlstop når streamen skal stoppes.");
+        if (!CPH.ObsIsStreaming(ObsConnection))
+        {
+            CPH.SetGlobalVar(VarIrlMode, false, true);
+            SendChat(L(
+                "IRL: Ending-scenen er aktiv, men OBS streamer ikke.",
+                "IRL: Ending scene is active, but OBS is not streaming."
+            ));
+            return true;
+        }
+
+        int seconds = GetEndingSeconds();
+        int sequence = GetInt(VarEndSequence, 0) + 1;
+        CPH.SetGlobalVar(VarEndSequence, sequence, true);
+        CPH.SetGlobalVar(VarEndPending, true, true);
+
+        if (!CPH.ActionExists(EndAutoStopAction))
+        {
+            CPH.SetGlobalVar(VarEndPending, false, true);
+            SendChat(L(
+                "IRL: Ending er aktiv, men auto-stopp action mangler - streamen fortsetter.",
+                "IRL: Ending is active, but the auto-stop action is missing - stream will continue."
+            ));
+            return false;
+        }
+
+        if (!CPH.RunAction(EndAutoStopAction, false))
+        {
+            CPH.SetGlobalVar(VarEndPending, false, true);
+            SendChat(L(
+                "IRL: Ending er aktiv, men auto-stopp kunne ikke startes.",
+                "IRL: Ending is active, but auto-stop could not be started."
+            ));
+            return false;
+        }
+
+        SendChat(L(
+            "IRL: Ending - streamen stopper automatisk om " + seconds + " sek.",
+            "IRL: Ending - stream will stop automatically in " + seconds + " sec."
+        ));
         return true;
     }
 
     private bool StopIrl()
     {
+        CancelPendingEnd();
         SetArmed(false);
 
         if (CPH.ObsIsStreaming(ObsConnection))
@@ -183,13 +266,19 @@ public class CPHInline
             catch (Exception ex)
             {
                 CPH.LogError("CometenIRL Admin: ObsStopStreaming failed: " + ex.Message);
-                SendChat("IRL: OBS klarte ikke å stoppe streamen.");
+                SendChat(L(
+                    "IRL: OBS klarte ikke å stoppe streamen.",
+                    "IRL: OBS could not stop the stream."
+                ));
                 return false;
             }
 
             if (!WaitForStreaming(false, 4000))
             {
-                SendChat("IRL: stoppkommando sendt, men OBS rapporterer fortsatt live.");
+                SendChat(L(
+                    "IRL: stoppkommando sendt, men OBS rapporterer fortsatt live.",
+                    "IRL: stop command sent, but OBS still reports streaming."
+                ));
                 return false;
             }
         }
@@ -201,13 +290,22 @@ public class CPHInline
         }
 
         CPH.SetGlobalVar(VarIrlMode, false, true);
-        SendChat("IRL: stream stoppet - watchdog av.");
+        SendChat(L(
+            "IRL: stream stoppet - watchdog av.",
+            "IRL: stream stopped - watchdog disarmed."
+        ));
         return true;
     }
 
     private bool SetSceneAlias(string alias)
     {
         string key = (alias ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (key == "end" || key == "ending")
+        {
+            return GoEnding();
+        }
+
         string scene;
         bool armAfter;
 
@@ -233,12 +331,6 @@ public class CPHInline
                 armAfter = false;
                 break;
 
-            case "end":
-            case "ending":
-                scene = GetString(VarEndingScene, DefaultEndingScene);
-                armAfter = false;
-                break;
-
             case "signal":
             case "lost":
                 scene = GetString(VarFallbackScene, DefaultFallbackScene);
@@ -246,15 +338,19 @@ public class CPHInline
                 break;
 
             default:
-                SendChat("IRL: ukjent scene-alias. Bruk soon, srt, brb, end eller signal.");
+                SendChat(L(
+                    "IRL: ukjent scene-alias. Bruk soon, srt, brb, end eller signal.",
+                    "IRL: unknown scene alias. Use soon, srt, brb, end or signal."
+                ));
                 return false;
         }
 
+        CancelPendingEnd();
         SetArmed(false);
 
         if (!SwitchScene(scene))
         {
-            SendChat("IRL: scenebytte feilet.");
+            SendChat(L("IRL: scenebytte feilet.", "IRL: scene switch failed."));
             return false;
         }
 
@@ -263,7 +359,10 @@ public class CPHInline
             SetArmed(true);
         }
 
-        SendChat("IRL: scene -> " + scene + (armAfter ? " | watchdog aktiv" : " | watchdog pauset"));
+        SendChat(L(
+            "IRL: scene -> " + scene + (armAfter ? " | watchdog aktiv" : " | watchdog pauset"),
+            "IRL: scene -> " + scene + (armAfter ? " | watchdog armed" : " | watchdog paused")
+        ));
         return true;
     }
 
@@ -282,19 +381,63 @@ public class CPHInline
         }
         else
         {
-            SendChat("IRL: bruk !irlpoints on eller !irlpoints off.");
+            SendChat(L(
+                "IRL: bruk !irlpoints on eller !irlpoints off.",
+                "IRL: use !irlpoints on or !irlpoints off."
+            ));
             return false;
         }
 
         if (!SetRewardsMode(irlMode, true))
         {
-            SendChat("IRL: Channel Points-gruppene kunne ikke oppdateres.");
+            SendChat(L(
+                "IRL: Channel Points-gruppene kunne ikke oppdateres.",
+                "IRL: Channel Points groups could not be updated."
+            ));
             return false;
         }
 
         SendChat(irlMode
-            ? "IRL: Channel Points satt til IRL-modus."
-            : "IRL: Channel Points satt tilbake til normal modus.");
+            ? L("IRL: Channel Points satt til IRL-modus.", "IRL: Channel Points set to IRL mode.")
+            : L("IRL: Channel Points satt tilbake til normal modus.", "IRL: Channel Points restored to normal mode."));
+        return true;
+    }
+
+    private bool SetLanguage(string value)
+    {
+        string key = FirstWord(value).Trim().ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            string current = GetLanguage();
+            SendChat(current == "en"
+                ? "IRL: language = English (EN)."
+                : "IRL: språk = Norsk (NO).");
+            return true;
+        }
+
+        string language;
+        if (key == "no" || key == "nb" || key == "norsk" || key == "norwegian")
+        {
+            language = "no";
+        }
+        else if (key == "en" || key == "eng" || key == "english")
+        {
+            language = "en";
+        }
+        else
+        {
+            SendChat(L(
+                "IRL: ugyldig språk. Bruk !irllang no eller !irllang en.",
+                "IRL: invalid language. Use !irllang no or !irllang en."
+            ));
+            return false;
+        }
+
+        CPH.SetGlobalVar(VarLanguage, language, true);
+        SendChat(language == "en"
+            ? "IRL: language set to English (EN). It stays English until you change it manually."
+            : "IRL: språk satt til Norsk (NO). Det forblir norsk til du endrer det manuelt.");
         return true;
     }
 
@@ -405,6 +548,28 @@ public class CPHInline
         return CPH.ObsIsStreaming(ObsConnection) == expected;
     }
 
+    private void CancelPendingEnd()
+    {
+        bool pending = GetBool(VarEndPending, false);
+        if (!pending)
+        {
+            return;
+        }
+
+        int sequence = GetInt(VarEndSequence, 0) + 1;
+        CPH.SetGlobalVar(VarEndSequence, sequence, true);
+        CPH.SetGlobalVar(VarEndPending, false, true);
+        CPH.LogInfo("CometenIRL Admin: pending ending auto-stop cancelled.");
+    }
+
+    private int GetEndingSeconds()
+    {
+        int seconds = GetInt(VarEndingSeconds, DefaultEndingSeconds);
+        if (seconds < 5) seconds = 5;
+        if (seconds > 120) seconds = 120;
+        return seconds;
+    }
+
     private void SetArmed(bool armed)
     {
         CPH.SetGlobalVar(VarWatchdogArmed, armed, true);
@@ -444,6 +609,7 @@ public class CPHInline
             case "irlstop": action = "stop"; return true;
             case "irlscene": action = "scene"; parameter = FirstWord(rawInput); return true;
             case "irlpoints": action = "points"; parameter = FirstWord(rawInput); return true;
+            case "irllang": action = "language"; parameter = FirstWord(rawInput); return true;
         }
 
         string full = (rawInput ?? string.Empty).Trim();
@@ -470,6 +636,17 @@ public class CPHInline
         }
 
         return string.Empty;
+    }
+
+    private string GetLanguage()
+    {
+        string value = GetString(VarLanguage, "no").Trim().ToLowerInvariant();
+        return value == "en" ? "en" : "no";
+    }
+
+    private string L(string norwegian, string english)
+    {
+        return GetLanguage() == "en" ? english : norwegian;
     }
 
     private string GetString(string name, string fallback)
@@ -502,6 +679,28 @@ public class CPHInline
         try
         {
             return CPH.GetGlobalVar<bool>(name, true);
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private int GetInt(string name, int fallback)
+    {
+        try
+        {
+            string text = (CPH.GetGlobalVar<string>(name, true) ?? string.Empty).Trim();
+            int parsed;
+            if (int.TryParse(text, out parsed)) return parsed;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return CPH.GetGlobalVar<int>(name, true);
         }
         catch
         {
