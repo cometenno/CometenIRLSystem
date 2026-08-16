@@ -82,9 +82,11 @@ def resolved_devices(config: dict[str, Any]) -> dict[str, str]:
     candidates.extend(DEFAULT_DEVICES)
 
     devices: dict[str, str] = {}
+    seen: set[str] = set()
     for candidate in candidates:
-        if candidate in devices:
+        if candidate in seen:
             continue
+        seen.add(candidate)
         try:
             path = Path(candidate)
             if path.exists():
@@ -94,7 +96,10 @@ def resolved_devices(config: dict[str, Any]) -> dict[str, str]:
     return devices
 
 
-def find_open_video_device(pids: list[int], devices: dict[str, str]) -> tuple[bool, str, int | None]:
+def find_open_video_device(
+    pids: list[int],
+    devices: dict[str, str],
+) -> tuple[bool, str, int | None]:
     wanted = set(devices.values())
     for pid in pids:
         fd_dir = Path(f"/proc/{pid}/fd")
@@ -110,6 +115,12 @@ def find_open_video_device(pids: list[int], devices: dict[str, str]) -> tuple[bo
             if target in wanted:
                 return True, target, pid
     return False, "", None
+
+
+def first_available_device(devices: dict[str, str]) -> str:
+    for resolved in devices.values():
+        return resolved
+    return ""
 
 
 def write_status(payload: dict[str, Any]) -> None:
@@ -132,15 +143,26 @@ def run(config_path: Path) -> None:
         roots = process_tree_roots(process)
         tree = process_tree(roots) if roots else []
         devices = resolved_devices(config)
-        active, device, owner_pid = find_open_video_device(tree, devices)
+
+        source_present = bool(devices)
+        source_device = first_available_device(devices)
+        pipeline_active, pipeline_device, owner_pid = find_open_video_device(tree, devices)
+        encoder_running = bool(roots)
+
+        # Yellow LED semantics:
+        # - Encoder stopped intentionally: video input may still be present, so keep yellow on.
+        # - Encoder running: require the encoder pipeline to actually hold the video device open.
+        video_active = pipeline_active if encoder_running else source_present
 
         write_status(
             {
-                "version": 1,
+                "version": 2,
                 "updated_unix": time.time(),
-                "encoder_running": bool(roots),
-                "active": active,
-                "device": device,
+                "encoder_running": encoder_running,
+                "source_present": source_present,
+                "pipeline_active": pipeline_active,
+                "active": video_active,
+                "device": pipeline_device or source_device,
                 "pid": owner_pid,
                 "process": process,
             }
@@ -158,9 +180,11 @@ def main() -> int:
         try:
             write_status(
                 {
-                    "version": 1,
+                    "version": 2,
                     "updated_unix": time.time(),
                     "encoder_running": False,
+                    "source_present": False,
+                    "pipeline_active": False,
                     "active": False,
                     "device": "",
                     "pid": None,
