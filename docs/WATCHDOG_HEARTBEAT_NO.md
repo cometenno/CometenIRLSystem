@@ -110,6 +110,8 @@ Forventet oppstart:
 Cometen IRL heartbeat started: receiver_id=belabox interval=30.0s
 ```
 
+429-fiksen ble verifisert 16. august 2026 med tjenesten aktiv i flere minutter uten nye 429-feil.
+
 ---
 
 ## 3. BELABOX Cloud ingest-watchdog
@@ -176,9 +178,11 @@ betyr at watchdog får kjøre selv om OBS ikke streamer. Dette brukes under test
 CometenIRL_WatchdogLiveOnly = true
 ```
 
-skal brukes i produksjon når watchdog-controlleren er endelig godkjent.
+betyr at watchdog bare er aktiv når OBS faktisk streamer.
 
-Statusverdier som controlleren kan skrive:
+Controller v8/v9 leser denne globalen robust både når Streamer.bot har lagret den som ekte bool og når den er lagret som teksten `"true"` / `"false"`.
+
+Statusverdier som controlleren skriver:
 
 ```text
 CometenIRL_BelaboxConnected
@@ -186,13 +190,18 @@ CometenIRL_BelaboxBitrate
 CometenIRL_BelaboxRtt
 CometenIRL_BelaboxDroppedPackets
 CometenIRL_BelaboxState
+CometenIRL_BelaboxFailCount
+CometenIRL_BelaboxRecoverCount
+CometenIRL_BelaboxQueryFailCount
+CometenIRL_SrtFallbackActive
+CometenIRL_SrtReturnScene
 ```
 
-Disse er beregnet for `!irlstatus`, LED-status og diagnostikk.
+Disse er beregnet for `!irlstatus`, diagnostikk og videre IRL-integrasjon.
 
 ---
 
-## 4. OBS-scener
+## 4. OBS-scener og scenebytte
 
 Bekreftede scenenavn:
 
@@ -201,7 +210,7 @@ Normal/IRL-video: BELABOX SRT
 Fallback:         IRL - SIGNAL MISTET
 ```
 
-Watchdog skal oppføre seg slik:
+Watchdog oppfører seg slik:
 
 ```text
 BELABOX publisher frisk
@@ -209,31 +218,74 @@ BELABOX publisher frisk
         v
 BELABOX SRT
         |
-        | bekreftet bitrate=0 / publisher offline
+        | 2 bekreftede dårlige målinger
+        | connected=false / bitrate=0
         v
 IRL - SIGNAL MISTET
         |
-        | flere stabile gode målinger
+        | 5 stabile gode målinger
         v
 BELABOX SRT / tidligere scene
 ```
 
-Scenebytte i OBS skjer asynkront. Et `SetCurrentProgramScene`-kall må derfor verifiseres på et senere tick, ikke umiddelbart i samme millisekund.
+### Viktig funn om OBS API
+
+Tidligere versjoner brukte:
+
+```text
+CPH.ObsSendRaw("SetCurrentProgramScene", ...)
+```
+
+Signal-deteksjonen fungerte, men OBS-scenen ble ikke byttet pålitelig. Dette ble isolert ved en separat Streamer.bot-test: samme OBS-tilkobling og samme scenenavn byttet umiddelbart når `CPH.ObsSetScene()` ble brukt.
+
+Fra **IRLAlertsController v9** brukes derfor:
+
+```text
+CPH.ObsSetScene(sceneName, 0)
+```
+
+for både fallback og recovery. Controlleren venter kort og leser deretter aktiv scene for å bekrefte byttet.
+
+`ObsSendRaw()` skal ikke tas tilbake som sceneautoritet uten ny begrunnelse/test.
 
 ---
 
-## 5. Nåværende status på watchdog-controlleren
+## 5. Verifisert status - IRLAlertsController v9
 
-**Viktig:** scene-watchdog er fortsatt i test/development per 16. august 2026.
+**Testgodkjent 16. august 2026 i OBS-offline testmodus.**
 
-Signal-/statsdelen er bekreftet fungerende med EU-ingest. Testene har vist at:
+Følgende ble testet flere ganger manuelt via BELABOX admin:
 
-- stats fra `eu.srt.belabox.net` er stabile fra både BELABOX og streaming-PC
-- `connected=false` / `bitrate=0` oppstår ved reelle videobortfall
-- OBS-fallback til `IRL - SIGNAL MISTET` fungerer
-- automatisk recovery er funksjonelt demonstrert, men controllerens pending/retry-state skal ryddes før `CometenIRL_WatchdogLiveOnly=true` regnes som produksjonsklar
+```text
+Starttilstand:
+BELABOX feed PÅ
+OBS scene = BELABOX SRT
 
-Derfor skal installasjonsguiden foreløpig behandle watchdog som valgfri testfunksjon, mens alert-receiver og heartbeat er normal installasjon.
+Stop i BELABOX admin:
+BELABOX Cloud -> connected=false / bitrate=0
+watchdog -> IRL - SIGNAL MISTET
+
+Start i BELABOX admin:
+BELABOX Cloud -> connected=true / bitrate>0
+5 stabile gode målinger
+watchdog -> BELABOX SRT
+```
+
+Bekreftet:
+
+- stats fra BELABOX Cloud registrerer faktisk signalstatus
+- `connected=false` / `bitrate=0` gir fallback etter konfigurert antall dårlige checks
+- OBS bytter til `IRL - SIGNAL MISTET`
+- når feed kommer tilbake, teller controlleren stabile gode målinger
+- OBS går automatisk tilbake til `BELABOX SRT`
+- hele fallback -> recovery-syklusen er testet flere ganger
+- scenebytte fungerer med `CPH.ObsSetScene()`
+
+### Produksjonsstatus
+
+Selve fallback/recovery-logikken i v9 er **testgodkjent**.
+
+Før `CometenIRL_WatchdogLiveOnly=true` regnes som endelig produksjonsverifisert bør det fortsatt gjøres én kontroll under en faktisk OBS-live-stream. Dette er kun for å verifisere live-only-gating; selve signal- og scene-logikken er allerede bekreftet i testmodus.
 
 ---
 
@@ -272,9 +324,22 @@ Videre USB/kameratest avventes til annet kamera/kabel kan testes.
 
 ## 7. Feilsøking
 
+### Watchdog registrerer tap, men OBS bytter ikke
+
+Kontroller globals mens feed er av:
+
+```text
+CometenIRL_BelaboxConnected = False
+CometenIRL_BelaboxBitrate = 0
+CometenIRL_BelaboxState = offline
+CometenIRL_BelaboxFailCount >= konfigurert FailChecks
+```
+
+Hvis disse stemmer, fungerer ingestdeteksjonen. Kontroller at Streamer.bot kjører **v9 eller nyere** og at `SwitchScene()` bruker `CPH.ObsSetScene()`.
+
 ### Heartbeat 429
 
-Kontroller først intervallet:
+Kontroller intervallet:
 
 ```bash
 journalctl --user -u cometen-irl-heartbeat.service -n 20 --no-pager
