@@ -14,3 +14,11 @@ CREATE TABLE IF NOT EXISTS irl_alert_events (
     PRIMARY KEY (id),
     INDEX idx_delivery (acknowledged_at, expires_at, leased_until, priority, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS irl_receiver_status (
+    receiver_id VARCHAR(64) NOT NULL,
+    last_seen DATETIME(6) NOT NULL,
+    version VARCHAR(32) NOT NULL DEFAULT '',
+    last_ip VARCHAR(45) NOT NULL DEFAULT '',
+    PRIMARY KEY (receiver_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
