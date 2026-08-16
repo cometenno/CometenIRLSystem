@@ -4,6 +4,9 @@
   "poll_interval_seconds": 0.75,
   "request_timeout_seconds": 10,
   "batch_size": 5,
+  "heartbeat_receiver_id": "belabox",
+  "heartbeat_interval_seconds": 30,
+  "heartbeat_timeout_seconds": 5,
   "sounds_directory": "sounds",
   "default_sound": "test.wav",
   "sound_map": {
