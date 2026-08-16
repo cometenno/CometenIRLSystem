@@ -1,83 +1,173 @@
 # Oppsett av receiver på ROCK 5B+
 
-Receiveren skal installeres ved siden av BELABOX og ikke inne i BELABOX-koden.
+Sist oppdatert: 16. august 2026.
 
-## 1. Kopier receiver-mappen
+Receiveren kjører ved siden av BELABOX og bruker samme repo som heartbeat, remote control og statusfunksjoner.
 
-Klon repositoryet eller kopier `receiver/` til ROCK 5B+.
-
-## 2. Installer
+## 1. Klon repoet
 
 ```bash
+cd ~
+git clone https://github.com/la1ona/CometenIRLAlerts.git
+cd CometenIRLAlerts/receiver
+```
+
+Ved senere oppdatering:
+
+```bash
+cd ~/CometenIRLAlerts
+git pull
+```
+
+## 2. Lag lokal config
+
+```bash
+cd ~/CometenIRLAlerts/receiver
+cp config.example.json config.json
+nano config.json
+```
+
+Minimum må ha korrekt:
+
+```text
+relay_base_url
+receiver_token
+```
+
+Heartbeat-standard:
+
+```json
+"heartbeat_receiver_id": "belabox",
+"heartbeat_interval_seconds": 30,
+"heartbeat_timeout_seconds": 5
+```
+
+Ikke sett heartbeat tilbake til 1 sekund. Det utløste `HTTP 429 Too Many Requests` på webhotellet.
+
+Valider:
+
+```bash
+python3 -m json.tool config.json >/dev/null && echo "config.json OK"
+```
+
+## 3. Legg inn lokale lydfiler
+
+Legg PCM WAV-filer i:
+
+```text
+~/CometenIRLAlerts/receiver/sounds/
+```
+
+Test:
+
+```bash
+pw-play ~/CometenIRLAlerts/receiver/sounds/test.wav
+```
+
+## 4. Installer user services
+
+Bruk user-systemd. Dette er viktig fordi PipeWire/WirePlumber og Bluetooth-lyd kjører i brukerens sesjon.
+
+Kjør:
+
+```bash
+cd ~/CometenIRLAlerts/receiver
+bash install-user-service.sh
+```
+
+Skriptet installerer nå begge:
+
+```text
+cometen-irl-alerts.service
+cometen-irl-heartbeat.service
+```
+
+Aktiver linger én gang:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+## 5. Kontroller tjenester
+
+Alert-receiver:
+
+```bash
+systemctl --user status cometen-irl-alerts.service
+journalctl --user -u cometen-irl-alerts.service -n 30 --no-pager
+```
+
+Heartbeat:
+
+```bash
+systemctl --user status cometen-irl-heartbeat.service
+journalctl --user -u cometen-irl-heartbeat.service -n 30 --no-pager
+```
+
+For heartbeat skal oppstart vise omtrent:
+
+```text
+Cometen IRL heartbeat started: receiver_id=belabox interval=30.0s
+```
+
+## 6. Restart etter config-endring
+
+```bash
+systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
+```
+
+## 7. Oppdater eksisterende installasjon
+
+```bash
+cd ~/CometenIRLAlerts
+git pull
 cd receiver
-chmod +x install.sh uninstall.sh receiver.py
-sudo ./install.sh
+bash install-user-service.sh
 ```
 
-Installasjonen bruker brukeren som kjørte `sudo` som servicebruker og legger filene i:
+Dette oppdaterer de genererte user-service-filene og starter/aktiverer begge tjenester.
+
+## 8. Bluetooth/PipeWire
+
+Kontroller sinks:
+
+```bash
+wpctl status
+```
+
+Sett standard sink:
+
+```bash
+wpctl set-default SINK_ID
+```
+
+Fullt verifisert headless-oppsett for ROCK 5B+/BELABOX:
 
 ```text
-/opt/cometen-irl-alerts/
+docs/BELABOX_ROCK5B_HEADLESS_NO.md
 ```
 
-## 3. Konfigurer
+## 9. Heartbeat er diagnostikk
 
-Rediger:
+Heartbeat forteller om boksen/receiveren lever. Den sier ikke nødvendigvis at kamera, GStreamer eller SRT-video er frisk.
 
-```bash
-sudo nano /opt/cometen-irl-alerts/config.json
-```
+OBS-scene-failover skal derfor baseres på BELABOX Cloud ingest-stats gjennom `IRLAlertsController`, ikke heartbeat alene.
 
-Sett:
-
-- `relay_base_url`
-- `receiver_token`
-- ønsket pollingintervall
-- lydfilene som skal brukes
-
-## 4. Legg inn lokale lydfiler
-
-Legg korte PCM WAV-filer i:
+Detaljer:
 
 ```text
-/opt/cometen-irl-alerts/sounds/
+docs/WATCHDOG_HEARTBEAT_NO.md
 ```
 
-Test først med `test.wav`.
+## 10. USB/video-feil
 
-## 5. Test lydutgangen manuelt
+Nattest 16. august 2026 viste gjentatte UVC/GStreamer-feil fra Elgato Facecam, inkludert `uvcvideo -71`, URB-resubmit-feil og eksplisitt USB-disconnect. Dette er et separat hardware/input-spor.
 
-Receiveren prøver i denne rekkefølgen:
-
-1. `pw-play`
-2. `paplay`
-3. `aplay`
-
-Test den spilleren som finnes på systemet, for eksempel:
+For kun nye hendelser:
 
 ```bash
-pw-play /opt/cometen-irl-alerts/sounds/test.wav
+sudo journalctl -kf -n 0 | grep -Ei 'uvc|usb|video|v4l2|xhci|disconnect|reset|error'
 ```
 
-Bluetooth-oppsett og automatisk reconnect ferdigstilles når ROCK 5B+, BELABOX-imaget og høyttaleren kan testes fysisk. Ulike BELABOX-images kan bruke forskjellig lydstakk.
-
-## 6. Start tjenesten
-
-```bash
-sudo systemctl start cometen-irl-alerts.service
-sudo systemctl status cometen-irl-alerts.service
-```
-
-Følg loggen:
-
-```bash
-journalctl -u cometen-irl-alerts.service -f
-```
-
-## Avinstallering
-
-```bash
-sudo ./uninstall.sh
-```
-
-Avinstalleringen fjerner tjenesten, men beholder konfigurasjon og lydfiler i `/opt/cometen-irl-alerts/`.
+Videre fysisk test av kamera/kabel avventes til annet utstyr er tilgjengelig.
