@@ -3,6 +3,7 @@ set -euo pipefail
 
 INSTALL_DIR="/opt/cometen-irl-alerts"
 SERVICE_NAME="cometen-irl-alerts.service"
+HEARTBEAT_SERVICE_NAME="cometen-irl-heartbeat.service"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_USER="${SUDO_USER:-${USER}}"
 
@@ -19,6 +20,7 @@ fi
 install -d -m 0755 "${INSTALL_DIR}"
 install -d -m 0755 "${INSTALL_DIR}/sounds"
 install -m 0755 "${SCRIPT_DIR}/receiver.py" "${INSTALL_DIR}/receiver.py"
+install -m 0755 "${SCRIPT_DIR}/heartbeat.py" "${INSTALL_DIR}/heartbeat.py"
 install -m 0644 "${SCRIPT_DIR}/config.example.json" "${INSTALL_DIR}/config.example.json"
 install -m 0644 "${SCRIPT_DIR}/sounds/README.md" "${INSTALL_DIR}/sounds/README.md"
 
@@ -33,9 +35,16 @@ sed \
   -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
   "${SCRIPT_DIR}/${SERVICE_NAME}" > "/etc/systemd/system/${SERVICE_NAME}"
 
+sed \
+  -e "s|@RUN_USER@|${RUN_USER}|g" \
+  -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
+  "${SCRIPT_DIR}/${HEARTBEAT_SERVICE_NAME}" > "/etc/systemd/system/${HEARTBEAT_SERVICE_NAME}"
+
 chmod 0644 "/etc/systemd/system/${SERVICE_NAME}"
+chmod 0644 "/etc/systemd/system/${HEARTBEAT_SERVICE_NAME}"
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
+systemctl enable "${HEARTBEAT_SERVICE_NAME}"
 
 echo
 echo "Installed to ${INSTALL_DIR}"
@@ -45,5 +54,7 @@ echo "Next steps:"
 echo "  1. Edit ${INSTALL_DIR}/config.json"
 echo "  2. Add WAV files to ${INSTALL_DIR}/sounds/"
 echo "  3. Verify Bluetooth/audio output manually"
-echo "  4. Start with: sudo systemctl start ${SERVICE_NAME}"
-echo "  5. View logs with: journalctl -u ${SERVICE_NAME} -f"
+echo "  4. Start receiver: sudo systemctl restart ${SERVICE_NAME}"
+echo "  5. Start heartbeat: sudo systemctl restart ${HEARTBEAT_SERVICE_NAME}"
+echo "  6. View receiver log: journalctl -u ${SERVICE_NAME} -f"
+echo "  7. View heartbeat log: journalctl -u ${HEARTBEAT_SERVICE_NAME} -f"
