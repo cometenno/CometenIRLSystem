@@ -12,11 +12,13 @@ using System.Text.RegularExpressions;
 //   - Restores that scene after the SRT input has been stable again
 //   - Does not force a restore if the operator manually changed scene
 //
-// Required Streamer.bot global variables:
-//   CometenIRL_SrtInputName      string  Exact OBS Media Source input name
-//   CometenIRL_FallbackScene     string  Exact OBS fallback scene name
+// Default OBS names:
+//   SRT Media Source: BELABOX SRT
+//   Fallback scene:   IRL - SIGNAL MISTET
 //
-// Optional global variables:
+// Optional Streamer.bot global overrides:
+//   CometenIRL_SrtInputName      string
+//   CometenIRL_FallbackScene     string
 //   CometenIRL_SrtFailChecks     int     Defaults to 3
 //   CometenIRL_SrtRecoverChecks  int     Defaults to 5
 //
@@ -25,6 +27,9 @@ using System.Text.RegularExpressions;
 public class CPHInline
 {
     private const int ObsConnection = 0;
+
+    private const string DefaultSrtInputName = "BELABOX SRT";
+    private const string DefaultFallbackScene = "IRL - SIGNAL MISTET";
     private const int DefaultFailChecks = 3;
     private const int DefaultRecoverChecks = 5;
 
@@ -44,11 +49,14 @@ public class CPHInline
         string inputName = (CPH.GetGlobalVar<string>(VarSrtInputName, true) ?? string.Empty).Trim();
         string fallbackScene = (CPH.GetGlobalVar<string>(VarFallbackScene, true) ?? string.Empty).Trim();
 
-        if (string.IsNullOrWhiteSpace(inputName) || string.IsNullOrWhiteSpace(fallbackScene))
+        if (string.IsNullOrWhiteSpace(inputName))
         {
-            CPH.LogWarn("CometenIRL Controller: SRT watchdog not configured. Set "
-                + VarSrtInputName + " and " + VarFallbackScene + ".");
-            return true;
+            inputName = DefaultSrtInputName;
+        }
+
+        if (string.IsNullOrWhiteSpace(fallbackScene))
+        {
+            fallbackScene = DefaultFallbackScene;
         }
 
         // The watchdog is intentionally inactive whenever OBS is not actually live.
