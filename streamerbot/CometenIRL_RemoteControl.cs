@@ -5,19 +5,27 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 
+// CometenIRLAlerts - remote control v0.5
+// Chat language follows persistent CometenIRL_Language: no (default) or en.
+
 public class CPHInline
 {
     private static readonly HttpClient Http = new HttpClient();
+    private const string VarLanguage = "CometenIRL_Language";
 
     public bool Execute()
     {
+        string language = GetLanguage();
         string relayBaseUrl = CPH.GetGlobalVar<string>("CometenIRL_RelayUrl", true);
         string senderToken = CPH.GetGlobalVar<string>("CometenIRL_SenderToken", true);
 
         if (string.IsNullOrWhiteSpace(relayBaseUrl) || string.IsNullOrWhiteSpace(senderToken))
         {
             CPH.LogError("CometenIRL Remote: Missing CometenIRL_RelayUrl or CometenIRL_SenderToken.");
-            SendChat("IRL: relay-oppsettet mangler.");
+            SendChat(L(language,
+                "IRL: relay-oppsettet mangler.",
+                "IRL: relay configuration is missing."
+            ));
             return false;
         }
 
@@ -30,7 +38,10 @@ public class CPHInline
             if (!TryParseCommand(input, out action, out value))
             {
                 CPH.LogError("CometenIRL Remote: Could not parse remote command: " + input);
-                SendChat("IRL: ugyldig remote-kommando.");
+                SendChat(L(language,
+                    "IRL: ugyldig remote-kommando.",
+                    "IRL: invalid remote command."
+                ));
                 return false;
             }
         }
@@ -38,7 +49,10 @@ public class CPHInline
         if (!ValidateAction(action, ref value))
         {
             CPH.LogError("CometenIRL Remote: Invalid action/value: " + action + " / " + value);
-            SendChat("IRL: ugyldig kommando eller verdi.");
+            SendChat(L(language,
+                "IRL: ugyldig kommando eller verdi.",
+                "IRL: invalid command or value."
+            ));
             return false;
         }
 
@@ -71,7 +85,10 @@ public class CPHInline
                     if (!response.IsSuccessStatusCode)
                     {
                         CPH.LogError("CometenIRL Remote: Relay returned HTTP " + (int)response.StatusCode + ": " + responseBody);
-                        SendChat("IRL: relay avviste kommandoen.");
+                        SendChat(L(language,
+                            "IRL: relay avviste kommandoen.",
+                            "IRL: relay rejected the command."
+                        ));
                         return false;
                     }
                 }
@@ -85,7 +102,13 @@ public class CPHInline
             {
                 if (string.IsNullOrWhiteSpace(resultMessage))
                 {
-                    resultMessage = resultOk ? "IRL: kommando utført." : "IRL: kommando feilet.";
+                    resultMessage = resultOk
+                        ? L(language, "IRL: kommando utført.", "IRL: command completed.")
+                        : L(language, "IRL: kommando feilet.", "IRL: command failed.");
+                }
+                else
+                {
+                    resultMessage = LocalizeReceiverMessage(resultMessage, language);
                 }
 
                 CPH.LogInfo("CometenIRL Remote: BELABOX result: " + resultMessage);
@@ -94,13 +117,19 @@ public class CPHInline
             }
 
             CPH.LogError("CometenIRL Remote: No BELABOX confirmation received for " + eventId + ".");
-            SendChat("IRL: ingen bekreftelse fra BELABOX.");
+            SendChat(L(language,
+                "IRL: ingen bekreftelse fra BELABOX.",
+                "IRL: no confirmation from BELABOX."
+            ));
             return false;
         }
         catch (Exception exception)
         {
             CPH.LogError("CometenIRL Remote: Send failed: " + exception.Message);
-            SendChat("IRL: kunne ikke kontakte relay/BELABOX.");
+            SendChat(L(language,
+                "IRL: kunne ikke kontakte relay/BELABOX.",
+                "IRL: could not contact relay/BELABOX."
+            ));
             return false;
         }
     }
@@ -139,6 +168,42 @@ public class CPHInline
         }
 
         return false;
+    }
+
+    private string LocalizeReceiverMessage(string message, string language)
+    {
+        string text = (message ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        if (language == "en")
+        {
+            text = Regex.Replace(text, @"^IRL:\s*volum satt til (\d+)%$", "IRL: volume set to $1%", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"^IRL:\s*volum økt med (\d+)%$", "IRL: volume increased by $1%", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"^IRL:\s*volum senket med (\d+)%$", "IRL: volume decreased by $1%", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"^IRL:\s*test-alert spilt av på (.+)$", "IRL: test alert played on $1", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"^IRL feil:", "IRL error:", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"(\d+)t\b", "$1h");
+            text = text.Replace("| Oppe ", "| Up ");
+            text = text.Replace("Oppetid", "Uptime");
+            text = text.Replace("VIDEO TAPT", "VIDEO LOST");
+            text = text.Replace("VIDEO AV", "VIDEO OFF");
+            text = text.Replace("ENC FEIL", "ENC ERR");
+            text = text.Replace("ENC AV", "ENC OFF");
+            return text;
+        }
+
+        text = Regex.Replace(text, @"^IRL:\s*(.+?) unmuted$", "IRL: $1 lyd på", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"^IRL:\s*(.+?) muted$", "IRL: $1 dempet", RegexOptions.IgnoreCase);
+        text = text.Replace("| Up ", "| Oppe ");
+        text = text.Replace("Uptime", "Oppetid");
+        text = text.Replace("VIDEO LOST", "VIDEO TAPT");
+        text = text.Replace("VIDEO OFF", "VIDEO AV");
+        text = text.Replace("ENC ERR", "ENC FEIL");
+        text = text.Replace("ENC OFF", "ENC AV");
+        return text;
     }
 
     private void SendChat(string message)
@@ -225,6 +290,24 @@ public class CPHInline
             default:
                 return false;
         }
+    }
+
+    private string GetLanguage()
+    {
+        try
+        {
+            string value = (CPH.GetGlobalVar<string>(VarLanguage, true) ?? string.Empty).Trim().ToLowerInvariant();
+            return value == "en" ? "en" : "no";
+        }
+        catch
+        {
+            return "no";
+        }
+    }
+
+    private static string L(string language, string norwegian, string english)
+    {
+        return language == "en" ? english : norwegian;
     }
 
     private string FirstArg(params string[] names)
