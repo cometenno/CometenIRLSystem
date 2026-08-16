@@ -238,18 +238,30 @@ Anbefalt command mode:
 
 `!irlscene` og `!irlpoints` må bruke en modus som gir argumentet etter kommandoen i `%rawInput%`.
 
-## Teststatus
+## Scene-bekreftelse i v1.1
 
-Implementert 16. august 2026.
+Første versjon ventet bare 150 ms etter `CPH.ObsSetScene()` før aktiv scene ble lest tilbake. I praktisk test byttet OBS korrekt fra `IRL - BRB` til `BELABOX SRT`, men Streamer.bot rakk å lese gammel scene og meldte derfor feil. Dette gjorde også at watchdog ikke ble armed igjen.
 
-**Ikke testgodkjent ennå.** Før funksjonen markeres produksjonsklar skal følgende verifiseres i Streamer.bot:
+Fra **CometenIRL_AdminControl v1.1** poller scene-bekreftelsen i opptil ca. 1,5 sekund. Dette er verifisert med `!irlbrb` etterfulgt av `!irlback`: scenen går tilbake til `BELABOX SRT` og watchdog blir aktivert igjen.
+
+## Teststatus - 16. august 2026
+
+Følgende er praktisk verifisert i Streamer.bot/OBS:
 
 ```text
-1. C#-filen kompilerer.
-2. !irlscene soon/srt/brb/end virker.
-3. WatchdogArmed hindrer fallback på Starting Soon/BRB/Ending.
-4. !irlgo / !irlback armer watchdog igjen.
-5. !irlstart starter OBS korrekt på Starting Soon.
-6. !irlstop stopper OBS og lar watchdog være disarmed.
-7. Channel Point-grupper testes når de er opprettet.
+!irlstart  -> Starting Soon + stream start + watchdog av
+!irlgo     -> BELABOX SRT + watchdog på
+!irlbrb    -> IRL - BRB + watchdog av
+!irlback   -> BELABOX SRT + watchdog på
+```
+
+`CometenIRL_WatchdogArmed` er bekreftet fungerende sammen med `IRLAlertsController v10`.
+
+Gjenstår før hele admin-kontrollen kan markeres komplett testgodkjent:
+
+```text
+!irlend
+!irlstop
+!irlscene alias-test
+Channel Point-grupper / !irlpoints når reward-oppsettet er klart
 ```
