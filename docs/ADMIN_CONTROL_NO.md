@@ -277,11 +277,11 @@ Praktisk verifisert:
 - `!irlback` - retur til BELABOX SRT + watchdog armed fungerer
 - v1.1 timing-fiks for OBS scene-confirmation er verifisert
 - `!irlend` - Ending-scenen vises, watchdog disarmes og OBS stopper automatisk etter ca. 25 sekunder
+- `!irlend` etterfulgt av `!irlback` - pending auto-stop kanselleres; streamen fortsetter og watchdog armeres igjen
 - `!irllang en` og `!irllang no` - persistent språkbytte fungerer
 - `!irlstatus` følger valgt språk i både EN- og NO-modus
 
 Gjenstår praktisk verifisering:
 
-- cancellation av pending Ending med `!irlback`
 - øvrige remote-control-responser på begge språk (volum, mute/unmute og alert-test)
 - Channel Point-grupper når de er opprettet
