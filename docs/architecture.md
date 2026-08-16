@@ -1,9 +1,13 @@
 # Arkitektur
 
-Cometen IRL Alerts er en separat returkanal ved siden av BELABOX.
+Sist oppdatert: 16. august 2026.
+
+Cometen IRL Alerts er hovedmodulen for IRL-returkanal, status og automatikk rundt BELABOX-oppsettet.
+
+## Hovedflyt for alerts
 
 ```text
-Twitch / YouTube
+Twitch / YouTube / CometenWebAdmin
        |
        v
 Streamer.bot på streaming-PC
@@ -17,40 +21,108 @@ PHP/MySQL relay på webhotellet
 Python receiver på ROCK 5B+
        |
        v
-Bluetooth-høyttaler eller annen lydutgang
+PipeWire / Bluetooth / lokal lyd
 ```
 
-## Avgrensning
+## Heartbeat/status
 
-BELABOX skal fortsatt bare håndtere:
+```text
+ROCK 5B+
+   |
+   | HTTPS POST hvert 30. sekund
+   v
+heartbeat.php
+   |
+   v
+irl_receiver_status
+   |
+   v
+receiver_status.php
+```
 
-- HDMI-video fra GoPro
-- lydinngang fra DJI Mic
-- videokoding
-- nettverksbonding
-- SRT/SRTLA til relay og OBS
+Heartbeat er kun diagnostikk. Standard offline-grense er 90 sekunder.
 
-Varslingssystemet kjører som en separat Linux-tjeneste og endrer ikke BELABOX-koden.
+## BELABOX video-watchdog
 
-## Levering av hendelser
+```text
+BELABOX / SRTLA
+      |
+      v
+BELABOX Cloud ingest
+      |
+      | publisher / bitrate / RTT / dropped packets
+      v
+IRLAlertsController i Streamer.bot
+      |
+      +--> BELABOX SRT
+      +--> IRL - SIGNAL MISTET
+```
 
-1. Streamer.bot lager en unik hendelses-ID.
-2. Hendelsen sendes til `push.php`.
-3. Relayen lagrer hendelsen med utløpstid.
-4. Receiveren henter en kort lease via `poll.php`.
-5. Receiveren spiller en lokal WAV-fil.
-6. Receiveren kvitterer hendelsen via `acknowledge.php`.
-7. En hendelse uten kvittering kan leveres på nytt når leasen utløper.
+Scene-watchdog skal bruke faktisk ingest-telemetri, ikke bare OBS Media Source state og ikke heartbeat alene.
+
+## Rollefordeling
+
+BELABOX/ROCK 5B+ håndterer:
+
+- videokilde
+- GStreamer/belacoder
+- SRT/SRTLA
+- bonding/nettverk
+- lokal alert-receiver
+- heartbeat
+- LED/status på boksen
+
+Streaming-PC håndterer:
+
+- Streamer.bot sender
+- remote control
+- BELABOX ingest-watchdog
+- OBS scene-failover/recovery
+- sentral IRL-status
+
+Webhotellet håndterer:
+
+- alert queue
+- kvittering/lease
+- control-resultater
+- heartbeat og receiver-status
+
+## Designregel
+
+Det skal være **én sentral sceneautoritet**: `IRLAlertsController`.
+
+Ikke kjør NOALBS eller en annen automatisk scene-switcher parallelt, fordi to systemer kan konkurrere om OBS-scenen.
+
+Heartbeat, watchdog, remote control, LED-status og senere diagnostikk skal bygges videre i samme Cometen IRL Alerts-prosjekt.
+
+## Levering av alert-events
+
+1. Streamer.bot lager en unik event-ID.
+2. Eventen sendes til `push.php`.
+3. Relay lagrer eventen med TTL.
+4. Receiver henter en lease via `poll.php`.
+5. Receiver spiller lokal WAV.
+6. Receiver kvitterer via `acknowledge.php`.
+7. Ukvittert event kan leveres igjen etter lease-utløp.
 
 ## Sikkerhet
 
-- Kun HTTPS skal brukes i produksjon.
-- Sender og receiver bruker forskjellige tokens.
-- Ingen Twitch-, YouTube- eller Streamer.bot-token lagres på relayen.
-- Lydfiler ligger lokalt på ROCK 5B+.
-- Filnavn valideres og kan ikke inneholde katalogstier.
-- Hendelser utløper automatisk og skal ikke brukes som permanent logg.
+- HTTPS i produksjon
+- forskjellige sender- og receiver-token
+- ingen Twitch-/YouTube-token på relayen
+- lydfiler lokalt på ROCK 5B+
+- hemmeligheter i `relay/config.php` og `receiver/config.json`
+- BELABOX stream-ID skal ikke committes
 
-## V1
+## Status
 
-V1 bruker kort polling. Dette er enkelt å drifte på vanlig PHP-webhotell. WebSocket eller Server-Sent Events kan vurderes senere dersom webhotellet støtter det stabilt.
+Alert-receiver, remote control og heartbeat er normal modulfunksjon.
+
+BELABOX scene-watchdog er fortsatt test/development per 16. august 2026. Ingest/fallback fungerer, mens recovery/pending-state skal ferdigstilles før produksjonsmodus aktiveres.
+
+Se:
+
+```text
+docs/INSTALLASJON_NO.md
+docs/WATCHDOG_HEARTBEAT_NO.md
+```
