@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 
-// CometenIRLAlerts - BELABOX ingest watchdog v6
+// CometenIRLAlerts - BELABOX ingest watchdog v7
 // Test mode: CometenIRL_WatchdogLiveOnly missing/false = runs while OBS is offline.
 // Production: set CometenIRL_WatchdogLiveOnly = true.
 
@@ -14,6 +14,7 @@ public class CPHInline
     private const int ObsConnection = 0;
     private const string DefaultStatsBaseUrl = "http://use.srt.belabox.net:8080";
     private const string DefaultFallbackScene = "IRL - SIGNAL MISTET";
+    private const string DefaultReturnScene = "BELABOX SRT";
     private const int DefaultFailChecks = 2;
     private const int DefaultQueryFailChecks = 3;
     private const int DefaultRecoverChecks = 5;
@@ -21,6 +22,7 @@ public class CPHInline
     private const string VarStreamId = "CometenIRL_BelaboxStreamId";
     private const string VarStatsBaseUrl = "CometenIRL_BelaboxStatsBaseUrl";
     private const string VarFallbackScene = "CometenIRL_FallbackScene";
+    private const string VarDefaultReturnScene = "CometenIRL_DefaultReturnScene";
     private const string VarFailChecks = "CometenIRL_BelaboxFailChecks";
     private const string VarQueryFailChecks = "CometenIRL_BelaboxQueryFailChecks";
     private const string VarRecoverChecks = "CometenIRL_BelaboxRecoverChecks";
@@ -66,6 +68,11 @@ public class CPHInline
         string streamId = GetString(VarStreamId, string.Empty);
         string statsBaseUrl = GetString(VarStatsBaseUrl, DefaultStatsBaseUrl);
         string fallbackScene = GetString(VarFallbackScene, DefaultFallbackScene);
+
+        if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
+        {
+            EnsureReturnScene();
+        }
 
         if (string.IsNullOrWhiteSpace(streamId))
         {
@@ -287,16 +294,23 @@ public class CPHInline
     {
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
 
+        // If the controller starts/reloads while OBS is already on the fallback
+        // scene, make sure recovery still has a valid target.
         if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
         {
+            EnsureReturnScene();
             CPH.SetGlobalVar(VarFallbackActive, true, true);
             return;
         }
 
-        string returnScene = GetString(VarReturnScene, string.Empty);
-        if (string.IsNullOrWhiteSpace(returnScene) && !string.IsNullOrWhiteSpace(currentScene))
+        // Always remember the actual scene that was active when signal was lost.
+        if (!string.IsNullOrWhiteSpace(currentScene))
         {
             CPH.SetGlobalVar(VarReturnScene, currentScene, true);
+        }
+        else
+        {
+            EnsureReturnScene();
         }
 
         // Never mark fallback active before OBS confirms the scene.
@@ -321,26 +335,81 @@ public class CPHInline
     private void RestoreAfterRecovery(string fallbackScene)
     {
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
-        string returnScene = GetString(VarReturnScene, string.Empty);
+        string returnScene = ResolveReturnScene();
 
-        if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal)
-            && !string.IsNullOrWhiteSpace(returnScene))
+        if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
         {
             CPH.LogInfo(
                 "CometenIRL Watchdog: BELABOX stable again. Scene '"
                 + fallbackScene + "' -> '" + returnScene + "'."
             );
-            SwitchScene(returnScene, "recovery");
-        }
-        else if (!string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
-        {
-            CPH.LogInfo(
-                "CometenIRL Watchdog: recovery detected, but OBS scene was changed manually to '"
-                + currentScene + "'. Auto-return skipped."
-            );
+
+            bool switched = SwitchScene(returnScene, "recovery");
+
+            if (switched)
+            {
+                CPH.LogInfo(
+                    "CometenIRL Watchdog: recovery confirmed on scene '"
+                    + returnScene + "'."
+                );
+                ResetRuntime();
+            }
+            else
+            {
+                // Keep fallback/recovery state intact so the next healthy tick
+                // retries the return instead of getting permanently stuck.
+                CPH.SetGlobalVar(VarFallbackActive, true, true);
+                CPH.LogWarn(
+                    "CometenIRL Watchdog: recovery scene change was not confirmed; "
+                    + "will retry on next healthy check."
+                );
+            }
+
+            return;
         }
 
+        if (string.Equals(currentScene, returnScene, StringComparison.Ordinal))
+        {
+            CPH.LogInfo(
+                "CometenIRL Watchdog: recovery already confirmed on scene '"
+                + returnScene + "'."
+            );
+            ResetRuntime();
+            return;
+        }
+
+        // Operator changed scene manually while fallback was active. Respect it.
+        CPH.LogInfo(
+            "CometenIRL Watchdog: recovery detected, but OBS scene was changed manually to '"
+            + currentScene + "'. Auto-return skipped."
+        );
         ResetRuntime();
+    }
+
+    private string ResolveReturnScene()
+    {
+        string stored = GetString(VarReturnScene, string.Empty);
+        if (!string.IsNullOrWhiteSpace(stored))
+        {
+            return stored;
+        }
+
+        return GetString(VarDefaultReturnScene, DefaultReturnScene);
+    }
+
+    private void EnsureReturnScene()
+    {
+        string stored = GetString(VarReturnScene, string.Empty);
+        if (!string.IsNullOrWhiteSpace(stored))
+        {
+            return;
+        }
+
+        CPH.SetGlobalVar(
+            VarReturnScene,
+            GetString(VarDefaultReturnScene, DefaultReturnScene),
+            true
+        );
     }
 
     private bool SwitchScene(string sceneName, string reason)
