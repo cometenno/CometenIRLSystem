@@ -269,17 +269,17 @@ Manuell override:
 
 ## Teststatus 16. august 2026
 
-Praktisk verifisert før v1.2:
+Praktisk verifisert:
 
 - `!irlstart` - Starting Soon + OBS start fungerer
 - `!irlgo` - BELABOX SRT + watchdog armed fungerer
 - `!irlbrb` - BRB + watchdog disarmed fungerer
 - `!irlback` - retur til BELABOX SRT + watchdog armed fungerer
 - v1.1 timing-fiks for OBS scene-confirmation er verifisert
+- `!irlend` - Ending-scenen vises, watchdog disarmes og OBS stopper automatisk etter ca. 25 sekunder
 
-Ny funksjon i v1.2 som fortsatt skal praktisk verifiseres:
+Gjenstår praktisk verifisering:
 
-- `!irlend` -> Ending -> automatisk OBS stop etter 25 sekunder
 - cancellation av pending Ending med `!irlback`
 - `!irllang no/en`
 - remote-control-responser på begge språk
