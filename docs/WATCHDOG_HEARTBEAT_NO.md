@@ -1,0 +1,329 @@
+# BELABOX watchdog og heartbeat - Cometen IRL Alerts
+
+Denne guiden dokumenterer status-, heartbeat- og scene-watchdog-delen av Cometen IRL Alerts.
+
+Sist oppdatert: 16. august 2026.
+
+## Formål
+
+Modulen har to separate statusmekanismer:
+
+1. **BELABOX Cloud ingest-watchdog** på streaming-PC-en. Denne ser på faktisk SRT-ingeststatus og brukes for scene-failover i OBS.
+2. **Heartbeat fra ROCK 5B+ til CometenIRLAlerts-relayen**. Denne forteller om selve boksen/receiveren er online og brukes kun som ekstra diagnostikk.
+
+Heartbeat skal **ikke** brukes som primær beslutning for OBS-scener. En BELABOX kan være online selv om kamera/GStreamer/SRT har falt ut.
+
+---
+
+## 1. Arkitektur
+
+```text
+BELABOX / ROCK 5B+
+    |
+    | SRT/SRTLA
+    v
+BELABOX Cloud ingest
+    |
+    | stats JSON
+    v
+Streamer.bot / IRLAlertsController
+    |
+    +--> BELABOX SRT
+    |
+    +--> IRL - SIGNAL MISTET
+
+BELABOX / ROCK 5B+
+    |
+    | HTTPS heartbeat hvert 30. sekund
+    v
+relay/heartbeat.php
+    |
+    v
+irl_receiver_status
+    |
+    v
+relay/receiver_status.php
+```
+
+---
+
+## 2. Heartbeat
+
+Filer:
+
+```text
+receiver/heartbeat.py
+receiver/cometen-irl-heartbeat-user.service
+relay/heartbeat.php
+relay/receiver_status.php
+```
+
+Heartbeat bruker samme `relay_base_url` og `receiver_token` som alert-receiveren.
+
+Standardverdier i `receiver/config.json`:
+
+```json
+{
+  "heartbeat_receiver_id": "belabox",
+  "heartbeat_interval_seconds": 30,
+  "heartbeat_timeout_seconds": 5
+}
+```
+
+### Hvorfor 30 sekunder
+
+Før 16. august 2026 ble heartbeat sendt hvert sekund. Webhotellet/nginx begynte da å svare med:
+
+```text
+HTTP 429 Too Many Requests
+```
+
+`heartbeat.php` og `bootstrap.php` har ingen intern 429-rate-limit. 429-svaret kom derfor fra webhotellet/proxyen foran PHP.
+
+Ny standard er 30 sekunder. Dersom relayen fortsatt svarer 429, bruker `heartbeat.py` `Retry-After` når headeren finnes, ellers minst 60 sekunders backoff før neste forsøk.
+
+### Offline-grense
+
+`receiver_status.php` bruker `receiver_offline_seconds` fra relayens `config.php`.
+
+Anbefalt og dokumentert verdi:
+
+```php
+'receiver_offline_seconds' => 90,
+```
+
+Dette tilsvarer tre tapte 30-sekunders heartbeats før receiveren rapporteres offline.
+
+### Kontrollere heartbeat
+
+```bash
+systemctl --user status cometen-irl-heartbeat.service
+```
+
+```bash
+journalctl --user -u cometen-irl-heartbeat.service -n 30 --no-pager
+```
+
+Forventet oppstart:
+
+```text
+Cometen IRL heartbeat started: receiver_id=belabox interval=30.0s
+```
+
+---
+
+## 3. BELABOX Cloud ingest-watchdog
+
+Watchdog-prinsippet er hentet fra samme type ingest-telemetri som NOALBS bruker: scenevalg skal baseres på **faktisk publisher/bitrate på ingest-serveren**, ikke på OBS Media Source state.
+
+OBS Media Source state ble forkastet som primær signalindikator fordi OBS kan fortsette å rapportere en SRT/FFmpeg-kilde som aktiv selv om transporten er borte eller siste bilde står frosset.
+
+### Bekreftet statsformat
+
+BELABOX Cloud returnerer blant annet:
+
+```json
+{
+  "publishers": {
+    "STREAM_ID": {
+      "connected": true,
+      "bitrate": 1800,
+      "rtt": 20,
+      "dropped_pkts": 0
+    }
+  }
+}
+```
+
+For den nåværende EU-ingesten skal stats-kilden være:
+
+```text
+http://eu.srt.belabox.net:8080
+```
+
+Ikke hardkod stream-ID i GitHub. Stream-ID skal ligge som persistent global i Streamer.bot.
+
+### Streamer.bot globals
+
+Obligatorisk:
+
+```text
+CometenIRL_BelaboxStreamId
+```
+
+Anbefalt eksplisitt stats-URL:
+
+```text
+CometenIRL_BelaboxStatsBaseUrl = http://eu.srt.belabox.net:8080
+```
+
+Scener:
+
+```text
+CometenIRL_FallbackScene = IRL - SIGNAL MISTET
+CometenIRL_DefaultReturnScene = BELABOX SRT
+```
+
+Test/produksjon:
+
+```text
+CometenIRL_WatchdogLiveOnly = false
+```
+
+betyr at watchdog får kjøre selv om OBS ikke streamer. Dette brukes under test.
+
+```text
+CometenIRL_WatchdogLiveOnly = true
+```
+
+skal brukes i produksjon når watchdog-controlleren er endelig godkjent.
+
+Statusverdier som controlleren kan skrive:
+
+```text
+CometenIRL_BelaboxConnected
+CometenIRL_BelaboxBitrate
+CometenIRL_BelaboxRtt
+CometenIRL_BelaboxDroppedPackets
+CometenIRL_BelaboxState
+```
+
+Disse er beregnet for `!irlstatus`, LED-status og diagnostikk.
+
+---
+
+## 4. OBS-scener
+
+Bekreftede scenenavn:
+
+```text
+Normal/IRL-video: BELABOX SRT
+Fallback:         IRL - SIGNAL MISTET
+```
+
+Watchdog skal oppføre seg slik:
+
+```text
+BELABOX publisher frisk
+        |
+        v
+BELABOX SRT
+        |
+        | bekreftet bitrate=0 / publisher offline
+        v
+IRL - SIGNAL MISTET
+        |
+        | flere stabile gode målinger
+        v
+BELABOX SRT / tidligere scene
+```
+
+Scenebytte i OBS skjer asynkront. Et `SetCurrentProgramScene`-kall må derfor verifiseres på et senere tick, ikke umiddelbart i samme millisekund.
+
+---
+
+## 5. Nåværende status på watchdog-controlleren
+
+**Viktig:** scene-watchdog er fortsatt i test/development per 16. august 2026.
+
+Signal-/statsdelen er bekreftet fungerende med EU-ingest. Testene har vist at:
+
+- stats fra `eu.srt.belabox.net` er stabile fra både BELABOX og streaming-PC
+- `connected=false` / `bitrate=0` oppstår ved reelle videobortfall
+- OBS-fallback til `IRL - SIGNAL MISTET` fungerer
+- automatisk recovery er funksjonelt demonstrert, men controllerens pending/retry-state skal ryddes før `CometenIRL_WatchdogLiveOnly=true` regnes som produksjonsklar
+
+Derfor skal installasjonsguiden foreløpig behandle watchdog som valgfri testfunksjon, mens alert-receiver og heartbeat er normal installasjon.
+
+---
+
+## 6. USB/Facecam-funn fra nattest
+
+Nattesten 16. august 2026 viste at reelle bitrate-bortfall korrelerte med feil fra USB-videokilden, blant annet:
+
+```text
+uvcvideo: Non-zero status (-71) in video completion handler
+uvcvideo: Failed to resubmit video URB (-1)
+gstreamer error from v4l2src0
+```
+
+Det ble også observert en eksplisitt kernelmelding:
+
+```text
+usb usb8-port1: Cannot enable. Maybe the USB cable is bad?
+usb 8-1: USB disconnect
+```
+
+Kameraet ble deretter registrert på nytt som Elgato Facecam.
+
+Dette betyr at watchdog i disse tilfellene reagerte på et **reelt input-/USB-bortfall**, ikke et falskt SRT-nettverksproblem.
+
+Autosuspend ble testet ved å sette:
+
+```bash
+echo on | sudo tee /sys/bus/usb/devices/8-1/power/control
+```
+
+Feilene fortsatte, så autosuspend alene forklarte ikke problemet.
+
+Videre USB/kameratest avventes til annet kamera/kabel kan testes.
+
+---
+
+## 7. Feilsøking
+
+### Heartbeat 429
+
+Kontroller først intervallet:
+
+```bash
+journalctl --user -u cometen-irl-heartbeat.service -n 20 --no-pager
+```
+
+Det skal stå:
+
+```text
+interval=30.0s
+```
+
+Hvis det står `1.0s`, kontroller `receiver/config.json` og restart tjenesten:
+
+```bash
+systemctl --user restart cometen-irl-heartbeat.service
+```
+
+### USB/GStreamer
+
+Kun nye kernelhendelser:
+
+```bash
+sudo journalctl -kf -n 0 | grep -Ei 'uvc|usb|video|v4l2|xhci|disconnect|reset|error'
+```
+
+### Heartbeat-status
+
+```bash
+systemctl --user status cometen-irl-heartbeat.service
+```
+
+### Alert-receiver
+
+```bash
+systemctl --user status cometen-irl-alerts.service
+```
+
+### Oppdatering
+
+```bash
+cd ~/CometenIRLAlerts
+git pull
+systemctl --user daemon-reload
+systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
+```
+
+---
+
+## 8. Designregel
+
+Alle IRL-funksjoner skal samles under Cometen IRL Alerts. Watchdog, heartbeat, status, LED-er, volumkontroll, diagnostikk og senere IRL-funksjoner skal koordineres gjennom samme prosjekt. Det skal ikke bygges konkurrerende scene-watchdogs ved siden av `IRLAlertsController`.
