@@ -1,1 +1,510 @@
-PLACEHOLDER
+using System;
+using System.Globalization;
+using System.Net.Http;
+using System.Text.RegularExpressions;
+
+// CometenIRLAlerts - BELABOX ingest watchdog v6
+// Test mode: CometenIRL_WatchdogLiveOnly missing/false = runs while OBS is offline.
+// Production: set CometenIRL_WatchdogLiveOnly = true.
+
+public class CPHInline
+{
+    private static readonly HttpClient Http = CreateHttpClient();
+
+    private const int ObsConnection = 0;
+    private const string DefaultStatsBaseUrl = "http://use.srt.belabox.net:8080";
+    private const string DefaultFallbackScene = "IRL - SIGNAL MISTET";
+    private const int DefaultFailChecks = 2;
+    private const int DefaultQueryFailChecks = 3;
+    private const int DefaultRecoverChecks = 5;
+
+    private const string VarStreamId = "CometenIRL_BelaboxStreamId";
+    private const string VarStatsBaseUrl = "CometenIRL_BelaboxStatsBaseUrl";
+    private const string VarFallbackScene = "CometenIRL_FallbackScene";
+    private const string VarFailChecks = "CometenIRL_BelaboxFailChecks";
+    private const string VarQueryFailChecks = "CometenIRL_BelaboxQueryFailChecks";
+    private const string VarRecoverChecks = "CometenIRL_BelaboxRecoverChecks";
+    private const string VarLiveOnly = "CometenIRL_WatchdogLiveOnly";
+
+    private const string VarConnected = "CometenIRL_BelaboxConnected";
+    private const string VarBitrate = "CometenIRL_BelaboxBitrate";
+    private const string VarRtt = "CometenIRL_BelaboxRtt";
+    private const string VarDropped = "CometenIRL_BelaboxDroppedPackets";
+    private const string VarState = "CometenIRL_BelaboxState";
+
+    private const string VarFailCount = "CometenIRL_BelaboxFailCount";
+    private const string VarRecoverCount = "CometenIRL_BelaboxRecoverCount";
+    private const string VarQueryFailCount = "CometenIRL_BelaboxQueryFailCount";
+    private const string VarFallbackActive = "CometenIRL_SrtFallbackActive";
+    private const string VarReturnScene = "CometenIRL_SrtReturnScene";
+
+    public bool Execute()
+    {
+        if (!CPH.ObsIsConnected(ObsConnection))
+        {
+            CPH.LogWarn("CometenIRL Watchdog: OBS is not connected.");
+            return true;
+        }
+
+        bool obsStreaming = CPH.ObsIsStreaming(ObsConnection);
+        bool liveOnly = CPH.GetGlobalVar<bool>(VarLiveOnly, true);
+        string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+
+        CPH.LogInfo(
+            "CometenIRL DIAG: tick obsStreaming=" + obsStreaming
+            + " liveOnly=" + liveOnly
+            + " scene='" + currentScene + "'."
+        );
+
+        if (liveOnly && !obsStreaming)
+        {
+            ResetRuntime();
+            SetStatus(false, 0, 0.0, 0, "standby");
+            return true;
+        }
+
+        string streamId = GetString(VarStreamId, string.Empty);
+        string statsBaseUrl = GetString(VarStatsBaseUrl, DefaultStatsBaseUrl);
+        string fallbackScene = GetString(VarFallbackScene, DefaultFallbackScene);
+
+        if (string.IsNullOrWhiteSpace(streamId))
+        {
+            SetStatus(false, 0, 0.0, 0, "configuration-error");
+            CPH.LogError("CometenIRL Watchdog: Missing persisted global " + VarStreamId + ".");
+            return true;
+        }
+
+        BelaboxStats stats;
+        string error;
+
+        if (!TryGetStats(statsBaseUrl, streamId, out stats, out error))
+        {
+            HandleQueryFailure(
+                error,
+                GetPositiveInt(VarQueryFailChecks, DefaultQueryFailChecks),
+                fallbackScene
+            );
+            return true;
+        }
+
+        CPH.SetGlobalVar(VarQueryFailCount, 0, true);
+
+        bool signalOk = stats.PublisherFound && stats.Connected && stats.Bitrate > 0;
+        SetStatus(
+            stats.Connected,
+            stats.Bitrate,
+            stats.Rtt,
+            stats.DroppedPackets,
+            signalOk ? "online" : "offline"
+        );
+
+        CPH.LogInfo(
+            "CometenIRL DIAG: stats publisherFound=" + stats.PublisherFound
+            + " connected=" + stats.Connected
+            + " bitrate=" + stats.Bitrate
+            + " rtt=" + stats.Rtt.ToString("0.0", CultureInfo.InvariantCulture)
+            + " dropped=" + stats.DroppedPackets
+            + " signalOk=" + signalOk + "."
+        );
+
+        if (signalOk)
+        {
+            HandleOnline(
+                stats,
+                GetPositiveInt(VarRecoverChecks, DefaultRecoverChecks),
+                fallbackScene
+            );
+        }
+        else
+        {
+            HandleOffline(
+                stats,
+                GetPositiveInt(VarFailChecks, DefaultFailChecks),
+                fallbackScene
+            );
+        }
+
+        return true;
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        HttpClient client = new HttpClient();
+        client.Timeout = TimeSpan.FromSeconds(2.5);
+        return client;
+    }
+
+    private bool TryGetStats(
+        string statsBaseUrl,
+        string streamId,
+        out BelaboxStats stats,
+        out string error)
+    {
+        stats = new BelaboxStats();
+        error = string.Empty;
+        string endpoint = statsBaseUrl.TrimEnd('/') + "/" + Uri.EscapeDataString(streamId);
+        string json;
+
+        try
+        {
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, endpoint))
+            {
+                request.Headers.TryAddWithoutValidation("Cache-Control", "no-cache");
+                request.Headers.TryAddWithoutValidation("User-Agent", "CometenIRLAlerts/0.6");
+
+                using (HttpResponseMessage response = Http.SendAsync(request).GetAwaiter().GetResult())
+                {
+                    json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        error = "HTTP " + (int)response.StatusCode + ": " + json;
+                        return false;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+
+        string body;
+        if (!TryExtractPublisherObject(json, streamId, out body))
+        {
+            stats.PublisherFound = false;
+            return true;
+        }
+
+        stats.PublisherFound = true;
+
+        if (!TryExtractBool(body, "connected", out stats.Connected))
+        {
+            error = "publisher JSON has no connected field";
+            return false;
+        }
+
+        if (!TryExtractInt(body, "bitrate", out stats.Bitrate))
+        {
+            error = "publisher JSON has no bitrate field";
+            return false;
+        }
+
+        if (!TryExtractDouble(body, "rtt", out stats.Rtt))
+        {
+            stats.Rtt = 0.0;
+        }
+
+        if (!TryExtractInt(body, "dropped_pkts", out stats.DroppedPackets))
+        {
+            stats.DroppedPackets = 0;
+        }
+
+        return true;
+    }
+
+    private void HandleOnline(BelaboxStats stats, int recoverChecks, string fallbackScene)
+    {
+        CPH.SetGlobalVar(VarFailCount, 0, true);
+
+        if (!IsFallbackActuallyActive(fallbackScene))
+        {
+            CPH.SetGlobalVar(VarRecoverCount, 0, true);
+            return;
+        }
+
+        int count = CPH.GetGlobalVar<int>(VarRecoverCount, true) + 1;
+        CPH.SetGlobalVar(VarRecoverCount, count, true);
+
+        CPH.LogInfo(
+            "CometenIRL Watchdog: recovery " + count + "/" + recoverChecks
+            + " bitrate=" + stats.Bitrate + " kbps."
+        );
+
+        if (count >= recoverChecks)
+        {
+            RestoreAfterRecovery(fallbackScene);
+        }
+    }
+
+    private void HandleOffline(BelaboxStats stats, int failChecks, string fallbackScene)
+    {
+        CPH.SetGlobalVar(VarRecoverCount, 0, true);
+
+        int count = CPH.GetGlobalVar<int>(VarFailCount, true) + 1;
+        CPH.SetGlobalVar(VarFailCount, count, true);
+
+        bool fallbackActive = IsFallbackActuallyActive(fallbackScene);
+
+        if (count == 1 || count == failChecks)
+        {
+            CPH.LogWarn(
+                "CometenIRL Watchdog: BELABOX ingest unhealthy "
+                + count + "/" + failChecks
+                + " connected=" + stats.Connected
+                + " bitrate=" + stats.Bitrate + " kbps."
+            );
+        }
+
+        if (fallbackActive || count < failChecks)
+        {
+            return;
+        }
+
+        ActivateFallback(
+            fallbackScene,
+            "ingest offline - connected=" + stats.Connected
+            + ", bitrate=" + stats.Bitrate + " kbps"
+        );
+    }
+
+    private void HandleQueryFailure(string error, int queryFailChecks, string fallbackScene)
+    {
+        SetStatus(false, 0, 0.0, 0, "stats-unavailable");
+        CPH.SetGlobalVar(VarRecoverCount, 0, true);
+
+        int count = CPH.GetGlobalVar<int>(VarQueryFailCount, true) + 1;
+        CPH.SetGlobalVar(VarQueryFailCount, count, true);
+
+        if (count == 1 || count == queryFailChecks)
+        {
+            CPH.LogWarn(
+                "CometenIRL Watchdog: BELABOX stats unavailable "
+                + count + "/" + queryFailChecks + " - " + error
+            );
+        }
+
+        if (IsFallbackActuallyActive(fallbackScene) || count < queryFailChecks)
+        {
+            return;
+        }
+
+        ActivateFallback(fallbackScene, "BELABOX stats unavailable");
+    }
+
+    private void ActivateFallback(string fallbackScene, string reason)
+    {
+        string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+
+        if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
+        {
+            CPH.SetGlobalVar(VarFallbackActive, true, true);
+            return;
+        }
+
+        string returnScene = GetString(VarReturnScene, string.Empty);
+        if (string.IsNullOrWhiteSpace(returnScene) && !string.IsNullOrWhiteSpace(currentScene))
+        {
+            CPH.SetGlobalVar(VarReturnScene, currentScene, true);
+        }
+
+        // Never mark fallback active before OBS confirms the scene.
+        CPH.SetGlobalVar(VarFallbackActive, false, true);
+
+        CPH.LogWarn(
+            "CometenIRL Watchdog: SIGNAL LOST - " + reason
+            + ". Scene '" + currentScene + "' -> '" + fallbackScene + "'."
+        );
+
+        bool switched = SwitchScene(fallbackScene, "fallback");
+        CPH.SetGlobalVar(VarFallbackActive, switched, true);
+
+        if (!switched)
+        {
+            CPH.LogWarn(
+                "CometenIRL DIAG: fallback was not confirmed; next tick will retry."
+            );
+        }
+    }
+
+    private void RestoreAfterRecovery(string fallbackScene)
+    {
+        string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+        string returnScene = GetString(VarReturnScene, string.Empty);
+
+        if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(returnScene))
+        {
+            CPH.LogInfo(
+                "CometenIRL Watchdog: BELABOX stable again. Scene '"
+                + fallbackScene + "' -> '" + returnScene + "'."
+            );
+            SwitchScene(returnScene, "recovery");
+        }
+        else if (!string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
+        {
+            CPH.LogInfo(
+                "CometenIRL Watchdog: recovery detected, but OBS scene was changed manually to '"
+                + currentScene + "'. Auto-return skipped."
+            );
+        }
+
+        ResetRuntime();
+    }
+
+    private bool SwitchScene(string sceneName, string reason)
+    {
+        string before = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+        string escaped = (sceneName ?? string.Empty)
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"");
+
+        CPH.LogWarn(
+            "CometenIRL DIAG: switching scene reason=" + reason
+            + " before='" + before + "' target='" + sceneName + "'."
+        );
+
+        try
+        {
+            string response = CPH.ObsSendRaw(
+                "SetCurrentProgramScene",
+                "{\"sceneName\":\"" + escaped + "\"}",
+                ObsConnection
+            );
+
+            string after = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+            bool confirmed = string.Equals(after, sceneName, StringComparison.Ordinal);
+
+            CPH.LogWarn(
+                "CometenIRL DIAG: scene switch response="
+                + (response ?? "<null>")
+                + " after='" + after + "' confirmed=" + confirmed + "."
+            );
+
+            return confirmed;
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError("CometenIRL DIAG: scene switch FAILED: " + ex.Message);
+            return false;
+        }
+    }
+
+    private bool IsFallbackActuallyActive(string fallbackScene)
+    {
+        bool stored = CPH.GetGlobalVar<bool>(VarFallbackActive, true);
+        string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+        bool actual = string.Equals(currentScene, fallbackScene, StringComparison.Ordinal);
+
+        if (stored && !actual)
+        {
+            CPH.LogWarn(
+                "CometenIRL DIAG: stale fallback flag detected. "
+                + "Stored=True but OBS scene='" + currentScene
+                + "'. Clearing flag and allowing retry."
+            );
+        }
+
+        if (stored != actual)
+        {
+            CPH.SetGlobalVar(VarFallbackActive, actual, true);
+        }
+
+        return actual;
+    }
+
+    private void ResetRuntime()
+    {
+        CPH.SetGlobalVar(VarFailCount, 0, true);
+        CPH.SetGlobalVar(VarRecoverCount, 0, true);
+        CPH.SetGlobalVar(VarQueryFailCount, 0, true);
+        CPH.SetGlobalVar(VarFallbackActive, false, true);
+        CPH.SetGlobalVar(VarReturnScene, string.Empty, true);
+    }
+
+    private void SetStatus(bool connected, int bitrate, double rtt, int dropped, string state)
+    {
+        CPH.SetGlobalVar(VarConnected, connected, true);
+        CPH.SetGlobalVar(VarBitrate, bitrate, true);
+        CPH.SetGlobalVar(VarRtt, rtt, true);
+        CPH.SetGlobalVar(VarDropped, dropped, true);
+        CPH.SetGlobalVar(VarState, state, true);
+    }
+
+    private string GetString(string name, string fallback)
+    {
+        string value = (CPH.GetGlobalVar<string>(name, true) ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private int GetPositiveInt(string name, int fallback)
+    {
+        int value = CPH.GetGlobalVar<int>(name, true);
+        return value > 0 ? value : fallback;
+    }
+
+    private static bool TryExtractPublisherObject(string json, string streamId, out string body)
+    {
+        body = string.Empty;
+
+        Match match = Regex.Match(
+            json ?? string.Empty,
+            "\\\"publishers\\\"\\s*:\\s*\\{[\\s\\S]*?\\\""
+            + Regex.Escape(streamId)
+            + "\\\"\\s*:\\s*\\{(?<body>[^{}]*)\\}",
+            RegexOptions.IgnoreCase
+        );
+
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        body = match.Groups["body"].Value;
+        return true;
+    }
+
+    private static bool TryExtractBool(string json, string key, out bool value)
+    {
+        value = false;
+        Match m = Regex.Match(
+            json ?? string.Empty,
+            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(true|false)",
+            RegexOptions.IgnoreCase
+        );
+
+        if (!m.Success)
+        {
+            return false;
+        }
+
+        value = string.Equals(m.Groups[1].Value, "true", StringComparison.OrdinalIgnoreCase);
+        return true;
+    }
+
+    private static bool TryExtractInt(string json, string key, out int value)
+    {
+        value = 0;
+        Match m = Regex.Match(
+            json ?? string.Empty,
+            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(-?[0-9]+)",
+            RegexOptions.IgnoreCase
+        );
+
+        return m.Success
+            && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryExtractDouble(string json, string key, out double value)
+    {
+        value = 0.0;
+        Match m = Regex.Match(
+            json ?? string.Empty,
+            "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)",
+            RegexOptions.IgnoreCase
+        );
+
+        return m.Success
+            && double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
+    private sealed class BelaboxStats
+    {
+        public bool PublisherFound;
+        public bool Connected;
+        public int Bitrate;
+        public double Rtt;
+        public int DroppedPackets;
+    }
+}
