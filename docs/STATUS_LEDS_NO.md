@@ -14,7 +14,7 @@ Bekreftet GPIO-oppsett på Cometen BELABOX:
 PIN 32 - PIN_32 - grønn - SYSTEM / ONLINE
 PIN 34 - GND    - felles jord
 PIN 36 - PIN_36 - blå   - BLUETOOTH / WPS200
-PIN 38 - PIN_38 - gul    - CAMERA / INPUT
+PIN 38 - PIN_38 - gul    - VIDEO SIGNAL / INPUT
 PIN 40 - PIN_40 - rød    - LIVE / OUTPUT
 ```
 
@@ -54,31 +54,43 @@ Kort bein / flat side / katode går til felles GND.
 - sakte blink: WPS200 er ikke koblet til, men watchdog-tjenesten kjører
 - rask blink: WPS200 er borte og watchdog-tjenesten er ikke aktiv
 
-### Gul - CAMERA / INPUT
+### Gul - VIDEO SIGNAL / INPUT
 
-- fast lys: USB-kamera finnes på `/dev/usb_capture`
-- sakte blink: kamera kan ikke bekreftes ennå
-- rask blink: kamera-feed har vært aktiv og senere forsvinner
+Gul skal vise aktiv lokal videopipeline, ikke bare at en USB-enhet er fysisk koblet til.
 
-Fra 16. august 2026 sjekker LED-modulen USB-kameraet først. Standard device er:
+- fast lys: `belacoder` kjører og har et faktisk BELABOX-videodevice åpent
+- rask blink: `belacoder` kjører, men ingen videodevice er aktivt åpent - input/pipeline er mistet eller restartes
+- av: encoder/videopipeline er ikke aktiv
+
+Modulen auto-detekterer disse BELABOX-videoenhetene:
 
 ```text
 /dev/usb_capture
+/dev/hdmirx
+/dev/hdmi_capture
 ```
 
-Hvis USB-device ikke kan bekreftes, brukes den eldre RTMP-sjekken som fallback:
-`http://127.0.0.1/stat` og deretter ekstern publisher på port 1935.
+`camera_device` i lokal `config.json` prioriteres først dersom en annen device-path brukes.
+Alle paths blir resolvet til det virkelige device-et, for eksempel:
 
-Dette retter problemet der gul/rød LED blinket selv om Elgato Facecam faktisk var koblet til via USB.
+```text
+/dev/usb_capture -> /dev/video1
+```
+
+Deretter kontrollerer modulen `/proc/<belacoder-pid>/fd/` for å bekrefte at GStreamer/belacoder faktisk har videodevicet åpent. LED-modulen åpner derfor aldri kameraet selv og konkurrerer ikke med BELABOX om V4L2-enheten.
+
+Dette er valgt fordi BELABOX selv avslutter/restarter `belacoder` når `v4l2src0` feiler eller pipelinen staller. Dermed forsvinner den aktive device-handle under et reelt videobortfall og gul går over til feilindikasjon.
+
+Dersom ingen lokal BELABOX-videoenhet finnes, beholdes eldre RTMP-deteksjon (`http://127.0.0.1/stat` / port 1935) som legacy-fallback.
 
 ### Rød - LIVE / OUTPUT
 
-- fast lys: `belacoder` kjører og kamera-input er bekreftet
-- sakte blink: `belacoder` kjører, men kamerastatus kan ikke bekreftes
-- rask blink: `belacoder` kjører mens kamera-input mangler
+- fast lys: `belacoder` kjører og video-input er aktiv
+- sakte blink: `belacoder` kjører, men videostatus kan ikke bestemmes
+- rask blink: `belacoder` kjører mens video-input mangler
 - av: BELABOX encoder ikke aktiv / ikke live
 
-Rød LED viser at encoder/output er aktiv. Den er ikke Twitch/OBS-live-indikator.
+Rød LED viser foreløpig BELABOX encoder/output-status. Den er ikke Twitch/OBS-live-indikator.
 
 ## Oppstartstest
 
@@ -137,7 +149,7 @@ Relevant del:
 }
 ```
 
-`camera_device` er valgfri. Dersom den mangler brukes `/dev/usb_capture` som standard.
+`camera_device` er valgfri. Dersom den mangler brukes `/dev/usb_capture` først, og de kjente HDMI-device-pathene blir også kontrollert automatisk.
 
 ## Test bare LED-ene
 
@@ -150,6 +162,22 @@ Forventet:
 
 ```text
 grønn -> blå -> gul -> rød -> alle
+```
+
+## Test videosignalstatus
+
+Etter restart kan videosignalendringer sees i receiver-loggen:
+
+```bash
+journalctl --user -u cometen-irl-alerts.service -f
+```
+
+Eksempler:
+
+```text
+Video signal active: local BELABOX video device is open by belacoder
+Video signal missing: belacoder is running but no active video device is open
+Video signal inactive: encoder is stopped
 ```
 
 ## Installer/oppdater brukertjenesten
