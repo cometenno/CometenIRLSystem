@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,48 @@ import receiver
 from status_leds import StatusLedController
 
 LOG = logging.getLogger("cometen-irl-alerts")
+VIDEO_STATUS_PATH = Path("/run/cometen-irl-video-status.json")
+
+
+class ProbedStatusLedController(StatusLedController):
+    def _read_root_video_probe(self) -> tuple[bool, bool, list[int]] | None:
+        try:
+            payload = json.loads(VIDEO_STATUS_PATH.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return None
+
+            updated = float(payload.get("updated_unix", 0.0))
+            stale_seconds = max(
+                1.0,
+                float(self.settings.get("video_probe_stale_seconds", 3.0)),
+            )
+            if updated <= 0 or (time.time() - updated) > stale_seconds:
+                return None
+
+            active = bool(payload.get("active", False))
+            encoder_running = bool(payload.get("encoder_running", False))
+            raw_pid = payload.get("pid")
+            pids: list[int] = []
+            if raw_pid is not None:
+                try:
+                    pids.append(int(raw_pid))
+                except (TypeError, ValueError):
+                    pass
+            return active, encoder_running, pids
+        except Exception:
+            return None
+
+    def _video_state(self) -> tuple[bool | None, bool, list[int]]:
+        probed = self._read_root_video_probe()
+        if probed is not None:
+            return probed
+        return super()._video_state()
+
+    def _live_process_active(self) -> bool:
+        probed = self._read_root_video_probe()
+        if probed is not None:
+            return probed[1]
+        return super()._live_process_active()
 
 
 def read_temperature() -> str:
@@ -47,7 +91,7 @@ def build_expanded_status(config: dict[str, Any]) -> str:
         wifi = wifi[5:]
     uptime = receiver.format_uptime()
 
-    status_probe = StatusLedController(config)
+    status_probe = ProbedStatusLedController(config)
     try:
         encoder = status_probe._live_process_active()
     except Exception:
@@ -110,7 +154,7 @@ def main() -> int:
 
     install_expanded_status()
 
-    leds = StatusLedController(config)
+    leds = ProbedStatusLedController(config)
     leds.start()
 
     try:
