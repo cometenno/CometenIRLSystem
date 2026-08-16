@@ -3,9 +3,10 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 
-// CometenIRLAlerts - BELABOX ingest watchdog v7
+// CometenIRLAlerts - BELABOX ingest watchdog v8
 // Test mode: CometenIRL_WatchdogLiveOnly missing/false = runs while OBS is offline.
 // Production: set CometenIRL_WatchdogLiveOnly = true.
+// The live-only global may be stored by Streamer.bot as either bool or string.
 
 public class CPHInline
 {
@@ -49,7 +50,7 @@ public class CPHInline
         }
 
         bool obsStreaming = CPH.ObsIsStreaming(ObsConnection);
-        bool liveOnly = CPH.GetGlobalVar<bool>(VarLiveOnly, true);
+        bool liveOnly = GetBool(VarLiveOnly, false);
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
 
         CPH.LogInfo(
@@ -294,8 +295,6 @@ public class CPHInline
     {
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
 
-        // If the controller starts/reloads while OBS is already on the fallback
-        // scene, make sure recovery still has a valid target.
         if (string.Equals(currentScene, fallbackScene, StringComparison.Ordinal))
         {
             EnsureReturnScene();
@@ -303,7 +302,6 @@ public class CPHInline
             return;
         }
 
-        // Always remember the actual scene that was active when signal was lost.
         if (!string.IsNullOrWhiteSpace(currentScene))
         {
             CPH.SetGlobalVar(VarReturnScene, currentScene, true);
@@ -313,7 +311,6 @@ public class CPHInline
             EnsureReturnScene();
         }
 
-        // Never mark fallback active before OBS confirms the scene.
         CPH.SetGlobalVar(VarFallbackActive, false, true);
 
         CPH.LogWarn(
@@ -356,8 +353,6 @@ public class CPHInline
             }
             else
             {
-                // Keep fallback/recovery state intact so the next healthy tick
-                // retries the return instead of getting permanently stuck.
                 CPH.SetGlobalVar(VarFallbackActive, true, true);
                 CPH.LogWarn(
                     "CometenIRL Watchdog: recovery scene change was not confirmed; "
@@ -378,7 +373,6 @@ public class CPHInline
             return;
         }
 
-        // Operator changed scene manually while fallback was active. Respect it.
         CPH.LogInfo(
             "CometenIRL Watchdog: recovery detected, but OBS scene was changed manually to '"
             + currentScene + "'. Auto-return skipped."
@@ -495,6 +489,42 @@ public class CPHInline
     {
         string value = (CPH.GetGlobalVar<string>(name, true) ?? string.Empty).Trim();
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private bool GetBool(string name, bool fallback)
+    {
+        try
+        {
+            string text = (CPH.GetGlobalVar<string>(name, true) ?? string.Empty).Trim();
+            bool parsed;
+
+            if (bool.TryParse(text, out parsed))
+            {
+                return parsed;
+            }
+
+            if (text == "1")
+            {
+                return true;
+            }
+
+            if (text == "0")
+            {
+                return false;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return CPH.GetGlobalVar<bool>(name, true);
+        }
+        catch
+        {
+            return fallback;
+        }
     }
 
     private int GetPositiveInt(string name, int fallback)
