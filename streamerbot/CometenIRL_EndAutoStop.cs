@@ -1,9 +1,8 @@
 using System;
 using System.Threading;
 
-// CometenIRLAlerts - ending auto-stop helper v1
+// CometenIRLAlerts - ending auto-stop helper v1.1
 // IMPORTANT: Put this action on a dedicated Streamer.bot queue, e.g. "IRL END".
-// It is started by CometenIRL_AdminControl with RunAction(..., false).
 // No chat command should point directly to this action.
 
 public class CPHInline
@@ -27,40 +26,19 @@ public class CPHInline
 
     public bool Execute()
     {
-        if (!GetBool(VarEndPending, false))
-        {
-            CPH.LogInfo("CometenIRL EndAutoStop: no ending is pending.");
-            return true;
-        }
+        if (!GetBool(VarEndPending, false)) return true;
 
         int sequence = GetInt(VarEndSequence, 0);
         int seconds = GetEndingSeconds();
         string endingScene = GetString(VarEndingScene, DefaultEndingScene);
 
-        CPH.LogInfo(
-            "CometenIRL EndAutoStop: waiting " + seconds
-            + " seconds for ending sequence " + sequence + "."
-        );
-
         CPH.Wait(seconds * 1000);
 
-        if (!GetBool(VarEndPending, false) || GetInt(VarEndSequence, 0) != sequence)
-        {
-            CPH.LogInfo("CometenIRL EndAutoStop: ending was cancelled or replaced.");
-            return true;
-        }
-
-        if (!GetBool(VarIrlMode, false))
-        {
-            ClearIfCurrent(sequence);
-            CPH.LogInfo("CometenIRL EndAutoStop: IRL mode is no longer active; stop cancelled.");
-            return true;
-        }
+        if (!GetBool(VarEndPending, false) || GetInt(VarEndSequence, 0) != sequence) return true;
 
         if (!CPH.ObsIsConnected(ObsConnection))
         {
             ClearIfCurrent(sequence);
-            CPH.LogError("CometenIRL EndAutoStop: OBS is not connected.");
             return false;
         }
 
@@ -68,66 +46,47 @@ public class CPHInline
         if (!string.Equals(currentScene, endingScene, StringComparison.Ordinal))
         {
             ClearIfCurrent(sequence);
-            CPH.LogInfo(
-                "CometenIRL EndAutoStop: scene changed from Ending to '"
-                + currentScene + "'; automatic stop cancelled."
-            );
             return true;
         }
 
         CPH.SetGlobalVar(VarWatchdogArmed, false, true);
+        CPH.LogInfo(
+            "CometenIRL EndAutoStop: ending conditions verified; stopping OBS for sequence "
+            + sequence + "."
+        );
 
         if (CPH.ObsIsStreaming(ObsConnection))
         {
-            try
-            {
-                CPH.ObsStopStreaming(ObsConnection);
-            }
-            catch (Exception ex)
+            try { CPH.ObsStopStreaming(ObsConnection); }
+            catch
             {
                 ClearIfCurrent(sequence);
-                CPH.LogError("CometenIRL EndAutoStop: ObsStopStreaming failed: " + ex.Message);
-                SendChat(L(
-                    "IRL: automatisk stopp feilet - OBS streamer fortsatt.",
-                    "IRL: automatic stop failed - OBS is still streaming."
-                ));
+                SendChat(L("IRL: automatisk stopp feilet - OBS streamer fortsatt.",
+                           "IRL: automatic stop failed - OBS is still streaming."));
                 return false;
             }
 
             if (!WaitForStreaming(false, 5000))
             {
                 ClearIfCurrent(sequence);
-                SendChat(L(
-                    "IRL: automatisk stopp ble sendt, men OBS rapporterer fortsatt live.",
-                    "IRL: automatic stop was sent, but OBS still reports streaming."
-                ));
+                SendChat(L("IRL: automatisk stopp ble sendt, men OBS rapporterer fortsatt live.",
+                           "IRL: automatic stop was sent, but OBS still reports streaming."));
                 return false;
             }
         }
 
-        bool rewardsOk = SetRewardsMode(false);
-        if (!rewardsOk)
-        {
-            CPH.LogWarn("CometenIRL EndAutoStop: normal reward mode could not be restored.");
-        }
-
+        SetRewardsMode(false);
         CPH.SetGlobalVar(VarIrlMode, false, true);
         ClearIfCurrent(sequence);
 
-        CPH.LogInfo("CometenIRL EndAutoStop: stream stopped automatically after Ending.");
-        SendChat(L(
-            "IRL: Ending ferdig - streamen er stoppet automatisk.",
-            "IRL: Ending finished - stream stopped automatically."
-        ));
+        SendChat(L("IRL: Ending ferdig - streamen er stoppet automatisk.",
+                   "IRL: Ending finished - stream stopped automatically."));
         return true;
     }
 
     private bool SetRewardsMode(bool irlMode)
     {
-        if (!GetBool(VarManageRewards, false))
-        {
-            return true;
-        }
+        if (!GetBool(VarManageRewards, false)) return true;
 
         string normalGroup = GetString(VarNormalRewardGroup, DefaultNormalRewardGroup);
         string irlGroup = GetString(VarIrlRewardGroup, DefaultIrlRewardGroup);
@@ -146,11 +105,7 @@ public class CPHInline
             }
             return true;
         }
-        catch (Exception ex)
-        {
-            CPH.LogError("CometenIRL EndAutoStop: reward group update failed: " + ex.Message);
-            return false;
-        }
+        catch { return false; }
     }
 
     private bool WaitForStreaming(bool expected, int timeoutMs)
@@ -158,29 +113,26 @@ public class CPHInline
         int waited = 0;
         while (waited < timeoutMs)
         {
-            if (CPH.ObsIsStreaming(ObsConnection) == expected)
-            {
-                return true;
-            }
-
+            if (CPH.ObsIsStreaming(ObsConnection) == expected) return true;
             Thread.Sleep(250);
             waited += 250;
         }
-
         return CPH.ObsIsStreaming(ObsConnection) == expected;
     }
 
     private void ClearIfCurrent(int sequence)
     {
-        if (GetInt(VarEndSequence, 0) == sequence)
-        {
-            CPH.SetGlobalVar(VarEndPending, false, true);
-        }
+        if (GetInt(VarEndSequence, 0) == sequence) CPH.SetGlobalVar(VarEndPending, false, true);
     }
 
     private int GetEndingSeconds()
     {
         int seconds = GetInt(VarEndingSeconds, DefaultEndingSeconds);
+
+        // Streamer.bot may return 0 for a missing int global.
+        // Treat missing/zero/negative as the documented default.
+        if (seconds <= 0) seconds = DefaultEndingSeconds;
+
         if (seconds < 5) seconds = 5;
         if (seconds > 120) seconds = 120;
         return seconds;
@@ -192,10 +144,7 @@ public class CPHInline
         return value == "en" ? "en" : "no";
     }
 
-    private string L(string norwegian, string english)
-    {
-        return GetLanguage() == "en" ? english : norwegian;
-    }
+    private string L(string norwegian, string english) => GetLanguage() == "en" ? english : norwegian;
 
     private string GetString(string name, string fallback)
     {
@@ -204,10 +153,7 @@ public class CPHInline
             string value = (CPH.GetGlobalVar<string>(name, true) ?? string.Empty).Trim();
             return string.IsNullOrWhiteSpace(value) ? fallback : value;
         }
-        catch
-        {
-            return fallback;
-        }
+        catch { return fallback; }
     }
 
     private bool GetBool(string name, bool fallback)
@@ -220,18 +166,9 @@ public class CPHInline
             if (text == "1") return true;
             if (text == "0") return false;
         }
-        catch
-        {
-        }
-
-        try
-        {
-            return CPH.GetGlobalVar<bool>(name, true);
-        }
-        catch
-        {
-            return fallback;
-        }
+        catch { }
+        try { return CPH.GetGlobalVar<bool>(name, true); }
+        catch { return fallback; }
     }
 
     private int GetInt(string name, int fallback)
@@ -242,25 +179,13 @@ public class CPHInline
             int parsed;
             if (int.TryParse(text, out parsed)) return parsed;
         }
-        catch
-        {
-        }
-
-        try
-        {
-            return CPH.GetGlobalVar<int>(name, true);
-        }
-        catch
-        {
-            return fallback;
-        }
+        catch { }
+        try { return CPH.GetGlobalVar<int>(name, true); }
+        catch { return fallback; }
     }
 
     private void SendChat(string message)
     {
-        if (!string.IsNullOrWhiteSpace(message))
-        {
-            CPH.SendMessage(message.Trim(), true, true);
-        }
+        if (!string.IsNullOrWhiteSpace(message)) CPH.SendMessage(message.Trim(), true, true);
     }
 }
