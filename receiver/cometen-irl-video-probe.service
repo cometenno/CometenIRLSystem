@@ -1,0 +1,12 @@
+[Unit]
+Description=Cometen IRL BELABOX Video Signal Probe
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @RECEIVER_DIR@/video_signal_probe.py @RECEIVER_DIR@/config.json
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
