@@ -30,6 +30,16 @@ IRLAlertsController
         |
         +--> BELABOX SRT
         +--> IRL - SIGNAL MISTET
+
+Twitch admin chat
+        |
+        v
+CometenIRL_AdminControl
+        |
+        +--> OBS start/stop
+        +--> IRL-scener
+        +--> WatchdogArmed
+        +--> Channel Point-grupper
 ```
 
 ## Bekreftet funksjon
@@ -50,10 +60,11 @@ IRLAlertsController
 - OBS fallback til `IRL - SIGNAL MISTET`
 - automatisk recovery tilbake til `BELABOX SRT` / tidligere scene
 - live-only gating med `CometenIRL_WatchdogLiveOnly=true`
+- remote-control-kommandoer for status, volum, mute/unmute og alert-test
 
 ## Watchdog-status
 
-**IRLAlertsController v9 er produksjonsverifisert 16. august 2026.**
+**IRLAlertsController v9 ble produksjonsverifisert 16. august 2026.**
 
 Bekreftet både i offline testmodus og under faktisk OBS-streaming:
 
@@ -64,7 +75,34 @@ Bekreftet både i offline testmodus og under faktisk OBS-streaming:
 - scenebytte bruker `CPH.ObsSetScene()` for både fallback og recovery
 - funksjonen er også verifisert under BELABOX bredbåndsmodus-test
 
+**v10** bygger videre på samme verifiserte watchdog og legger til `CometenIRL_WatchdogArmed`. Når denne er `false`, fortsetter BELABOX-telemetrien å oppdateres, men watchdog får ikke bytte scene. Dette brukes av den nye IRL admin-kontrollen for Starting Soon, BRB og Ending. v10/admin-gating er ny kode og skal praktisk testgodkjennes i Streamer.bot før den markeres produksjonsverifisert.
+
 Ikke kjør NOALBS eller annen automatisk scene-switcher parallelt med `IRLAlertsController`.
+
+## IRL Admin Control
+
+Ny lokal Streamer.bot-action:
+
+```text
+streamerbot/CometenIRL_AdminControl.cs
+```
+
+Planlagte admin-kommandoer:
+
+```text
+!irlstart
+!irlgo
+!irlbrb
+!irlback
+!irlend
+!irlstop
+!irlscene <alias>
+!irlpoints on|off
+```
+
+Detaljert oppsett:
+
+[`docs/ADMIN_CONTROL_NO.md`](docs/ADMIN_CONTROL_NO.md)
 
 ## Installer / oppdater
 
@@ -98,6 +136,7 @@ bash install-gpio-leds.sh
 
 - [`docs/INSTALLASJON_NO.md`](docs/INSTALLASJON_NO.md) - komplett installasjon
 - [`docs/WATCHDOG_HEARTBEAT_NO.md`](docs/WATCHDOG_HEARTBEAT_NO.md) - watchdog, heartbeat, 429 og USB-funn
+- [`docs/ADMIN_CONTROL_NO.md`](docs/ADMIN_CONTROL_NO.md) - IRL admin chat, OBS start/stopp, scene og Channel Points
 - [`docs/BELABOX_ROCK5B_HEADLESS_NO.md`](docs/BELABOX_ROCK5B_HEADLESS_NO.md) - headless ROCK 5B+/Bluetooth/PipeWire
 - [`docs/REMOTE_CONTROL_NO.md`](docs/REMOTE_CONTROL_NO.md) - remote control
 - [`docs/STATUS_LEDS_NO.md`](docs/STATUS_LEDS_NO.md) - LED-status
@@ -158,4 +197,4 @@ Aldri hardkod:
 
 ## Designregel
 
-Alertlevering, remote control, heartbeat, LED-status, BELABOX/SRT-watchdog, OBS-failover og videre diagnostikk skal samles og koordineres i dette prosjektet.
+Alertlevering, remote control, heartbeat, LED-status, BELABOX/SRT-watchdog, OBS-failover, IRL admin-kontroll og videre diagnostikk skal samles og koordineres i dette prosjektet.
