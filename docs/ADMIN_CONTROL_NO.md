@@ -1,14 +1,20 @@
 # IRL Admin Control - Streamer.bot
 
-Denne modulen gir broadcaster/admin lokal kontroll over OBS-delen av Cometen IRL Alerts fra chat.
+Denne modulen gir broadcaster/admin lokal kontroll over OBS-delen av Cometen IRL Alerts fra Twitch-chat.
 
-Fil:
+Hovedfil:
 
 ```text
 streamerbot/CometenIRL_AdminControl.cs
 ```
 
-Actionen går **direkte mot OBS og Twitch i Streamer.bot**. Den går ikke gjennom BELABOX-relayen, fordi start/stopp av OBS, scenebytte og Channel Point-grupper tilhører streaming-PC-en.
+Ending-helper:
+
+```text
+streamerbot/CometenIRL_EndAutoStop.cs
+```
+
+Admin-kontrollen går direkte mot OBS/Twitch i Streamer.bot. Den går ikke gjennom BELABOX-relayen.
 
 ## Kommandoer
 
@@ -21,82 +27,166 @@ Actionen går **direkte mot OBS og Twitch i Streamer.bot**. Den går ikke gjenno
 !irlstop
 !irlscene <alias>
 !irlpoints on|off
+!irllang no|en
 ```
 
-Anbefalt rettighet i Streamer.bot: **Broadcaster only**. Særlig `!irlstart` og `!irlstop` skal ikke være åpne for vanlig chat.
+Anbefalt rettighet: **Broadcaster only**.
 
-## Oppførsel
-
-### `!irlstart`
-
-Sekvens:
+Alle kommandoene over peker til samme action:
 
 ```text
-watchdog DISARMED
--> IRL - STARTING SOON
--> eventuelt Channel Points til IRL-modus
--> OBS Start Streaming
+CometenIRL_AdminControl
 ```
 
-Watchdog blir bevisst holdt av mens Starting Soon kjører, slik at manglende BELABOX-feed ikke kan sende OBS til `IRL - SIGNAL MISTET` før IRL-delen faktisk skal begynne.
+`CometenIRL_EndAutoStop` er kun en intern helper og skal ikke ha chat-trigger.
 
-Chatrespons ved suksess:
+## Normal IRL-flyt
 
 ```text
-IRL: Starting Soon - stream startet. Bruk !irlgo når du er klar.
+!irlstart
+  -> watchdog av
+  -> IRL - STARTING SOON
+  -> start OBS-stream
+
+!irlgo
+  -> BELABOX SRT
+  -> watchdog på
+
+!irlbrb
+  -> watchdog av
+  -> IRL - BRB
+
+!irlback
+  -> BELABOX SRT
+  -> watchdog på
+
+!irlend
+  -> watchdog av
+  -> IRL - ENDING
+  -> credits/ending får gå i 25 sekunder som standard
+  -> OBS stopper automatisk
+
+!irlstop
+  -> umiddelbar manuell stopp
 ```
 
-### `!irlgo`
+`!irlstop` beholdes som nød/manuell stopp selv om vanlig avslutning nå skal gjøres med `!irlend`.
+
+## Automatisk Ending
+
+`!irlend` krever ikke lenger en ekstra `!irlstop`.
+
+Standard:
 
 ```text
--> BELABOX SRT
--> watchdog ARMED
+CometenIRL_EndingSeconds = 25
 ```
 
-Når watchdog er armed, får `IRLAlertsController` igjen myndighet til å bytte mellom:
+Verdien er valgfri og clamped til 5-120 sekunder. Hvis globalen mangler brukes 25 sekunder.
+
+Ending-helperen kjøres med:
 
 ```text
-BELABOX SRT
-<->
-IRL - SIGNAL MISTET
+CPH.RunAction("CometenIRL_EndAutoStop", false)
 ```
 
-### `!irlbrb`
+slik at admin-actionen kan returnere umiddelbart.
+
+### Viktig queue-oppsett
+
+Lag action:
 
 ```text
-watchdog DISARMED
--> IRL - BRB
+CometenIRL_EndAutoStop
 ```
 
-### `!irlback`
+med hele `streamerbot/CometenIRL_EndAutoStop.cs`.
+
+Sett denne actionen på en **egen Streamer.bot queue**, for eksempel:
 
 ```text
--> BELABOX SRT
--> watchdog ARMED
+IRL END
 ```
 
-### `!irlend`
+Ikke bruk samme queue som `IRLAlertsController`/watchdog. Helperen venter i opptil 25 sekunder og skal derfor ikke blokkere watchdog-køen.
+
+### Avbryte Ending
+
+Hvis en ny IRL-livssykluskommando brukes før tiden går ut, annulleres pending auto-stop. Eksempel:
 
 ```text
-watchdog DISARMED
--> IRL - ENDING
+!irlend
+!irlback
 ```
 
-Streamen stoppes ikke. `!irlstop` brukes når ending er ferdig.
+Da skal streamen fortsette og watchdog armeres igjen.
 
-### `!irlstop`
+Helperen sjekker også at OBS fortsatt står på `IRL - ENDING` før den stopper streamen. Hvis scenen er endret manuelt, avbrytes auto-stop.
+
+## Språk - persistent NO/EN
+
+Felles persisted global:
 
 ```text
-watchdog DISARMED
--> OBS Stop Streaming
--> eventuelt Channel Points tilbake til normal modus
+CometenIRL_Language
 ```
 
-Hvis OBS fortsatt rapporterer live etter stop-kommandoen, blir normal reward-modus ikke aktivert automatisk.
+Gyldige verdier:
 
-## Manuelt scenebytte
+```text
+no
+en
+```
 
-`!irlscene` bruker whitelist/aliaser, ikke fritekst-scenavn.
+Default når globalen mangler:
+
+```text
+no
+```
+
+Bytt manuelt med:
+
+```text
+!irllang no
+!irllang en
+```
+
+Språket **endres aldri automatisk** ved start, stopp, restart eller scenebytte. Når engelsk er satt, forblir systemet engelsk til `!irllang no` brukes, og motsatt.
+
+`!irllang` uten parameter viser aktivt språk.
+
+Samme global leses av:
+
+```text
+CometenIRL_AdminControl
+CometenIRL_RemoteControl
+CometenIRL_EndAutoStop
+```
+
+Dermed følger admin-responser, status, volum, mute/unmute og alert-test samme valgte språk.
+
+## Watchdog armed-state
+
+Persisted global:
+
+```text
+CometenIRL_WatchdogArmed
+```
+
+```text
+true  = watchdog kan styre fallback/recovery
+false = telemetry oppdateres, men watchdog får ikke bytte scene
+```
+
+`IRLAlertsController v10` bruker denne separat fra:
+
+```text
+CometenIRL_WatchdogLiveOnly
+```
+
+Starting Soon, BRB og Ending disarmer watchdog. `!irlgo` og `!irlback` armer den igjen.
+
+## Scene-aliaser
 
 ```text
 !irlscene soon
@@ -106,73 +196,35 @@ Hvis OBS fortsatt rapporterer live etter stop-kommandoen, blir normal reward-mod
 !irlscene signal
 ```
 
-Aliasene betyr:
-
 ```text
 soon   -> IRL - STARTING SOON, watchdog av
 srt    -> BELABOX SRT, watchdog på
 brb    -> IRL - BRB, watchdog av
-end    -> IRL - ENDING, watchdog av
+end    -> IRL - ENDING + automatisk stopp
 signal -> IRL - SIGNAL MISTET, watchdog av
 ```
 
-Dette hindrer at chat kan sende OBS til et vilkårlig scenenavn.
-
-## Watchdog armed-state
-
-Ny persisted global:
-
-```text
-CometenIRL_WatchdogArmed
-```
-
-Verdier:
-
-```text
-true  = watchdog kan styre fallback/recovery
-false = watchdog oppdaterer fortsatt BELABOX-telemetri, men får ikke bytte scene
-```
-
-Hvis globalen ikke finnes, bruker `IRLAlertsController v10` standard `true` for bakoverkompatibilitet.
-
-`CometenIRL_WatchdogLiveOnly` og `CometenIRL_WatchdogArmed` har forskjellige roller:
-
-```text
-WatchdogLiveOnly = skal watchdog være aktiv når OBS ikke streamer?
-WatchdogArmed    = får watchdog lov til å styre scene akkurat nå?
-```
-
-Eksempel produksjon:
-
-```text
-CometenIRL_WatchdogLiveOnly = true
-```
-
-Under selve IRL-streamen styrer admin-kommandoene `WatchdogArmed` automatisk.
-
 ## Scenenavn som globals
 
-Standardnavn:
-
 ```text
-CometenIRL_StartingSoonScene   = IRL - STARTING SOON
-CometenIRL_DefaultReturnScene  = BELABOX SRT
-CometenIRL_FallbackScene       = IRL - SIGNAL MISTET
-CometenIRL_BrbScene            = IRL - BRB
-CometenIRL_EndingScene         = IRL - ENDING
+CometenIRL_StartingSoonScene  = IRL - STARTING SOON
+CometenIRL_DefaultReturnScene = BELABOX SRT
+CometenIRL_FallbackScene      = IRL - SIGNAL MISTET
+CometenIRL_BrbScene           = IRL - BRB
+CometenIRL_EndingScene        = IRL - ENDING
 ```
 
-Globalene er valgfrie. Hvis de mangler, brukes navnene over.
+Hvis de mangler, brukes verdiene over.
 
 ## Channel Points
 
-Automatisk reward-bytte er laget inn, men er med vilje avslått som standard til gruppene er ferdig satt opp.
+Automatisk reward-bytte finnes, men er avslått til reward-gruppene er ferdige:
 
 ```text
 CometenIRL_ManageRewards = false
 ```
 
-Når Channel Point-gruppene er klare:
+Når klart:
 
 ```text
 CometenIRL_ManageRewards = true
@@ -194,36 +246,14 @@ IRL    -> disabled
 NORMAL -> enabled
 ```
 
-Rewards som skal finnes i begge oppsett kan ligge i en tredje gruppe som ikke berøres av admin-kontrollen.
-
-### Manuell override
-
-Disse fungerer selv om `CometenIRL_ManageRewards=false`:
+Manuell override:
 
 ```text
 !irlpoints on
 !irlpoints off
 ```
 
-De er ment som admin-test/nød-override.
-
-## Oppsett i Streamer.bot
-
-Lag én Action:
-
-```text
-CometenIRL_AdminControl
-```
-
-Legg inn én `Execute C# Code` med **hele**:
-
-```text
-streamerbot/CometenIRL_AdminControl.cs
-```
-
-Lag kommandoene og legg `Command Triggered` for alle på samme action.
-
-Anbefalt command mode:
+## Streamer.bot command mode
 
 ```text
 !irlstart   Exact
@@ -234,34 +264,23 @@ Anbefalt command mode:
 !irlstop    Exact
 !irlscene   Start
 !irlpoints  Start
+!irllang    Start
 ```
 
-`!irlscene` og `!irlpoints` må bruke en modus som gir argumentet etter kommandoen i `%rawInput%`.
+## Teststatus 16. august 2026
 
-## Scene-bekreftelse i v1.1
+Praktisk verifisert før v1.2:
 
-Første versjon ventet bare 150 ms etter `CPH.ObsSetScene()` før aktiv scene ble lest tilbake. I praktisk test byttet OBS korrekt fra `IRL - BRB` til `BELABOX SRT`, men Streamer.bot rakk å lese gammel scene og meldte derfor feil. Dette gjorde også at watchdog ikke ble armed igjen.
+- `!irlstart` - Starting Soon + OBS start fungerer
+- `!irlgo` - BELABOX SRT + watchdog armed fungerer
+- `!irlbrb` - BRB + watchdog disarmed fungerer
+- `!irlback` - retur til BELABOX SRT + watchdog armed fungerer
+- v1.1 timing-fiks for OBS scene-confirmation er verifisert
 
-Fra **CometenIRL_AdminControl v1.1** poller scene-bekreftelsen i opptil ca. 1,5 sekund. Dette er verifisert med `!irlbrb` etterfulgt av `!irlback`: scenen går tilbake til `BELABOX SRT` og watchdog blir aktivert igjen.
+Ny funksjon i v1.2 som fortsatt skal praktisk verifiseres:
 
-## Teststatus - 16. august 2026
-
-Følgende er praktisk verifisert i Streamer.bot/OBS:
-
-```text
-!irlstart  -> Starting Soon + stream start + watchdog av
-!irlgo     -> BELABOX SRT + watchdog på
-!irlbrb    -> IRL - BRB + watchdog av
-!irlback   -> BELABOX SRT + watchdog på
-```
-
-`CometenIRL_WatchdogArmed` er bekreftet fungerende sammen med `IRLAlertsController v10`.
-
-Gjenstår før hele admin-kontrollen kan markeres komplett testgodkjent:
-
-```text
-!irlend
-!irlstop
-!irlscene alias-test
-Channel Point-grupper / !irlpoints når reward-oppsettet er klart
-```
+- `!irlend` -> Ending -> automatisk OBS stop etter 25 sekunder
+- cancellation av pending Ending med `!irlback`
+- `!irllang no/en`
+- remote-control-responser på begge språk
+- Channel Point-grupper når de er opprettet
