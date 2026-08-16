@@ -87,3 +87,22 @@ sudo -u user XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active cometen-i
 Hvis `journalctl -b -1` viser forrige boot, er persistent journal verifisert.
 
 Deretter gjøres en langtest uten flere endringer, slik at eventuelle nye feil kan sammenlignes mot denne baselinen.
+
+## USB-kamera og status-LED - observasjon 2026-08-16
+
+Testoppsett: powerbank startet på 100 %, USB-kamera som videokilde, og bilde var synlig i OBS.
+
+Observerte LED-er:
+
+- Gul blinket selv om USB-kamerabildet var aktivt.
+- Rød blinket samtidig.
+
+Dette stemmer med dagens LED-logikk: gul sjekker RTMP-kilden `/publish/live`, og rød bygger på samme kamerastatus sammen med `belacoder`. USB-kamera blir derfor ikke registrert som gyldig aktiv kamerakilde selv om BELABOX faktisk leverer bilde.
+
+Planlagt software-fiks:
+
+- Gul skal være solid når enten RTMP-kamera eller en aktiv USB-videokilde er tilgjengelig.
+- Rød skal bruke den samlede kamerastatusen, ikke bare RTMP-statusen.
+- GoPro/RTMP-logikken skal beholdes uendret for RTMP-kilder.
+
+Under samme USB-test datt bildet/forbindelsen kort ut, men kom tilbake av seg selv. Årsak er ikke fastslått ennå. Dette skal sammenlignes mot BELABOX-loggen ved neste logganalyse i stedet for å anta om feilen lå i USB-kamera, pipeline, nettverk eller output.
