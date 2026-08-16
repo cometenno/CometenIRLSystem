@@ -14,7 +14,8 @@ using System.Text.RegularExpressions;
 //   - Writes temporary diagnostic lines to the Streamer.bot log
 //
 // Default OBS names:
-//   SRT Media Source: BELABOX SRT
+//   SRT Media Source: belabox
+//   SRT Scene:        BELABOX SRT
 //   Fallback scene:   IRL - SIGNAL MISTET
 //
 // Optional Streamer.bot global overrides:
@@ -29,7 +30,7 @@ public class CPHInline
 {
     private const int ObsConnection = 0;
 
-    private const string DefaultSrtInputName = "BELABOX SRT";
+    private const string DefaultSrtInputName = "belabox";
     private const string DefaultFallbackScene = "IRL - SIGNAL MISTET";
     private const int DefaultFailChecks = 3;
     private const int DefaultRecoverChecks = 5;
