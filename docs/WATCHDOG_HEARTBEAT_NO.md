@@ -178,7 +178,7 @@ betyr at watchdog får kjøre selv om OBS ikke streamer. Dette brukes under test
 CometenIRL_WatchdogLiveOnly = true
 ```
 
-betyr at watchdog bare er aktiv når OBS faktisk streamer.
+betyr at watchdog bare er aktiv når OBS faktisk streamer. Dette er anbefalt produksjonsinnstilling og er live-verifisert.
 
 Controller v8/v9 leser denne globalen robust både når Streamer.bot har lagret den som ekte bool og når den er lagret som teksten `"true"` / `"false"`.
 
@@ -252,9 +252,9 @@ for både fallback og recovery. Controlleren venter kort og leser deretter aktiv
 
 ## 5. Verifisert status - IRLAlertsController v9
 
-**Testgodkjent 16. august 2026 i OBS-offline testmodus.**
+**Produksjonsverifisert 16. august 2026.**
 
-Følgende ble testet flere ganger manuelt via BELABOX admin:
+Først ble følgende testet flere ganger manuelt via BELABOX admin mens OBS ikke streamet og `CometenIRL_WatchdogLiveOnly=false`:
 
 ```text
 Starttilstand:
@@ -271,6 +271,19 @@ BELABOX Cloud -> connected=true / bitrate>0
 watchdog -> BELABOX SRT
 ```
 
+Deretter ble `CometenIRL_WatchdogLiveOnly=true` verifisert:
+
+```text
+OBS ikke streaming:
+BELABOX feed av -> ingen automatisk scenebytte
+
+OBS streaming:
+BELABOX feed av -> IRL - SIGNAL MISTET
+BELABOX feed på -> automatisk tilbake til BELABOX SRT
+```
+
+Live-testen ble også kjørt i BELABOX bredbåndsmodus og fungerte som forventet.
+
 Bekreftet:
 
 - stats fra BELABOX Cloud registrerer faktisk signalstatus
@@ -280,12 +293,20 @@ Bekreftet:
 - OBS går automatisk tilbake til `BELABOX SRT`
 - hele fallback -> recovery-syklusen er testet flere ganger
 - scenebytte fungerer med `CPH.ObsSetScene()`
+- `WatchdogLiveOnly=true` blokkerer watchdog-sceneautoritet når OBS ikke streamer
+- samme live-only-innstilling aktiverer fallback/recovery korrekt under faktisk OBS-streaming
 
 ### Produksjonsstatus
 
-Selve fallback/recovery-logikken i v9 er **testgodkjent**.
+IRLAlertsController v9 er **produksjonsverifisert** for gjeldende BELABOX/OBS-oppsett.
 
-Før `CometenIRL_WatchdogLiveOnly=true` regnes som endelig produksjonsverifisert bør det fortsatt gjøres én kontroll under en faktisk OBS-live-stream. Dette er kun for å verifisere live-only-gating; selve signal- og scene-logikken er allerede bekreftet i testmodus.
+Anbefalt produksjonsinnstilling:
+
+```text
+CometenIRL_WatchdogLiveOnly = true
+```
+
+Bruk `false` kun når scenelogikken skal kunne testes mens OBS ikke streamer.
 
 ---
 
