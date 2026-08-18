@@ -48,13 +48,15 @@ fi
 sed "s|@RECEIVER_DIR@|${SCRIPT_DIR}|g" "${VIDEO_TEMPLATE}" \
   | sudo tee "${VIDEO_SERVICE_PATH}" >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now "${VIDEO_SERVICE}"
+sudo systemctl enable "${VIDEO_SERVICE}"
+# Always restart on install/update so the running Python process loads the
+# newest video_signal_probe.py code from the repository.
+sudo systemctl restart "${VIDEO_SERVICE}"
 
 echo
 echo "GPIO-støtte er installert."
 echo "Bruker ${TARGET_USER} er lagt i gruppen gpio."
-echo "Video-probe er installert som root-tjeneste: ${VIDEO_SERVICE}"
-echo "v4l-utils er installert for HDMI-RX signal-lock deteksjon."
+echo "Video-probe er installert/restartet som root-tjeneste: ${VIDEO_SERVICE}"
 echo
 echo "Status video-probe:"
 echo "  sudo systemctl status ${VIDEO_SERVICE} --no-pager"
