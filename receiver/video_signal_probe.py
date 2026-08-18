@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -12,6 +14,7 @@ from typing import Any
 STATUS_PATH = Path("/run/cometen-irl-video-status.json")
 DEFAULT_PROCESS = "belacoder"
 DEFAULT_DEVICES = ("/dev/usb_capture", "/dev/hdmirx", "/dev/hdmi_capture")
+HDMI_RX_DEVICE = "/dev/hdmirx"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -117,10 +120,80 @@ def find_open_video_device(
     return False, "", None
 
 
-def first_available_device(devices: dict[str, str]) -> str:
-    for resolved in devices.values():
-        return resolved
-    return ""
+def hdmi_rx_signal_present(device: str = HDMI_RX_DEVICE) -> tuple[bool, str]:
+    """Return real HDMI-RX signal state using V4L2 DV timings.
+
+    ROCK 5B+ keeps /dev/hdmirx present even with no cable/feed. Therefore
+    device existence alone must not turn the yellow VIDEO LED on.
+    """
+    if not Path(device).exists():
+        return False, "device-missing"
+
+    v4l2_ctl = shutil.which("v4l2-ctl")
+    if v4l2_ctl is None:
+        return False, "v4l2-ctl-missing"
+
+    try:
+        completed = subprocess.run(
+            [v4l2_ctl, "-d", device, "--query-dv-timings"],
+            check=False,
+            timeout=3,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except Exception as exception:
+        return False, f"query-error:{exception}"
+
+    output = completed.stdout or ""
+    if completed.returncode != 0:
+        return False, "no-lock"
+
+    # Require non-zero active timings as an extra guard against a false success.
+    width = 0
+    height = 0
+    for line in output.splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith("active width:"):
+            try:
+                width = int(stripped.split(":", 1)[1].strip())
+            except Exception:
+                width = 0
+        elif stripped.startswith("active height:"):
+            try:
+                height = int(stripped.split(":", 1)[1].strip())
+            except Exception:
+                height = 0
+
+    if width > 0 and height > 0:
+        return True, f"locked:{width}x{height}"
+
+    return False, "zero-timings"
+
+
+def source_state(devices: dict[str, str]) -> tuple[bool, str, str]:
+    """Return (source_present, resolved_device, detail).
+
+    USB capture devices are treated as present when the device node exists.
+    HDMI-RX is special: it must also report a valid signal lock.
+    """
+    for configured, resolved in devices.items():
+        if configured == HDMI_RX_DEVICE:
+            present, detail = hdmi_rx_signal_present(configured)
+            if present:
+                return True, resolved, detail
+            continue
+
+        return True, resolved, "device-present"
+
+    # If HDMI-RX exists but has no lock, expose the device path for diagnostics
+    # while correctly reporting source_present=false.
+    if HDMI_RX_DEVICE in devices:
+        present, detail = hdmi_rx_signal_present(HDMI_RX_DEVICE)
+        return present, devices[HDMI_RX_DEVICE], detail
+
+    return False, "", "no-source"
 
 
 def write_status(payload: dict[str, Any]) -> None:
@@ -144,22 +217,23 @@ def run(config_path: Path) -> None:
         tree = process_tree(roots) if roots else []
         devices = resolved_devices(config)
 
-        source_present = bool(devices)
-        source_device = first_available_device(devices)
+        source_present, source_device, source_detail = source_state(devices)
         pipeline_active, pipeline_device, owner_pid = find_open_video_device(tree, devices)
         encoder_running = bool(roots)
 
         # Yellow LED semantics:
-        # - Encoder stopped intentionally: video input may still be present, so keep yellow on.
-        # - Encoder running: require the encoder pipeline to actually hold the video device open.
+        # - Encoder stopped: show whether a REAL source is available.
+        #   HDMI-RX requires a valid DV-timings lock, not just /dev/video0.
+        # - Encoder running: require the encoder pipeline to hold a video device open.
         video_active = pipeline_active if encoder_running else source_present
 
         write_status(
             {
-                "version": 2,
+                "version": 3,
                 "updated_unix": time.time(),
                 "encoder_running": encoder_running,
                 "source_present": source_present,
+                "source_detail": source_detail,
                 "pipeline_active": pipeline_active,
                 "active": video_active,
                 "device": pipeline_device or source_device,
@@ -180,10 +254,11 @@ def main() -> int:
         try:
             write_status(
                 {
-                    "version": 2,
+                    "version": 3,
                     "updated_unix": time.time(),
                     "encoder_running": False,
                     "source_present": False,
+                    "source_detail": "probe-error",
                     "pipeline_active": False,
                     "active": False,
                     "device": "",
