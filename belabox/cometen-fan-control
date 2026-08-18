@@ -1,54 +1,127 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TEMP_FILE=/sys/class/thermal/thermal_zone0/temp
-COOLING_DIR=/sys/class/thermal/cooling_device0
-STATE_FILE="$COOLING_DIR/cur_state"
-MAX_STATE_FILE="$COOLING_DIR/max_state"
-POLICY_FILE=/sys/class/thermal/thermal_zone0/policy
+# CometenIRLAlerts - ROCK 5B+ external Noctua PWM fan controller v2.0
+#
+# Hardware:
+#   ROCK 5B+ GPIO pin 3 -> PWM15-M1 -> Noctua blue PWM wire
+#   GPIO pin 4          -> +5V       -> Noctua yellow wire
+#   GPIO pin 5          -> TACH      -> Noctua green wire (RPM support later)
+#   GPIO pin 6          -> GND       -> Noctua black wire
+#
+# Uses PWM15 device febf0030.pwm.
+# PWM frequency: 25 kHz (period 40000 ns).
+#
+# Temperature curve:
+#   < 42 C   -> 20 %
+#   42-49 C  -> 30 %
+#   50-56 C  -> 45 %
+#   57-64 C  -> 70 %
+#   >= 65 C  -> 100 %
+#
+# The script detects the correct pwmchip dynamically, so it does not depend
+# on Linux assigning PWM15 to pwmchip1 every boot.
 
-# Keep the existing BELABOX fan curve, but add hysteresis between OFF and state 1.
-# OFF -> 1 at 43 C. Once running, state 1 stays active until temperature drops below 40 C.
-# Higher fan steps remain unchanged: 50/57/65 C.
+TEMP_FILE="/sys/class/thermal/thermal_zone0/temp"
+PWM_DEVICE_MATCH="febf0030.pwm"
+PWM_CHANNEL=0
+PWM_PERIOD_NS=40000
+POLL_SECONDS=2
 
-if [[ -w "$POLICY_FILE" ]]; then
-    echo user_space > "$POLICY_FILE" || true
+find_pwmchip() {
+    local chip
+    for chip in /sys/class/pwm/pwmchip*; do
+        [[ -e "$chip" ]] || continue
+        if readlink -f "$chip/device" | grep -q "$PWM_DEVICE_MATCH"; then
+            echo "$chip"
+            return 0
+        fi
+    done
+    return 1
+}
+
+set_duty_percent() {
+    local percent="$1"
+    local duty=$(( PWM_PERIOD_NS * percent / 100 ))
+    echo "$duty" > "$PWM_PATH/duty_cycle"
+}
+
+failsafe_full_speed() {
+    if [[ -n "${PWM_PATH:-}" && -d "${PWM_PATH:-}" ]]; then
+        echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle" 2>/dev/null || true
+    fi
+}
+
+[[ -r "$TEMP_FILE" ]] || {
+    echo "Temperature source missing: $TEMP_FILE" >&2
+    exit 1
+}
+
+PWM_CHIP="$(find_pwmchip)" || {
+    echo "PWM15 controller ($PWM_DEVICE_MATCH) not found." >&2
+    exit 1
+}
+
+PWM_PATH="$PWM_CHIP/pwm${PWM_CHANNEL}"
+
+if [[ ! -d "$PWM_PATH" ]]; then
+    echo "$PWM_CHANNEL" > "$PWM_CHIP/export"
+    for _ in {1..20}; do
+        [[ -d "$PWM_PATH" ]] && break
+        sleep 0.1
+    done
 fi
 
+[[ -d "$PWM_PATH" ]] || {
+    echo "Could not export $PWM_PATH" >&2
+    exit 1
+}
+
+# If the service exits or is stopped, leave the fan at full speed.
+trap failsafe_full_speed EXIT INT TERM
+
+# Configure PWM safely.
+if [[ "$(cat "$PWM_PATH/enable" 2>/dev/null || echo 0)" != "0" ]]; then
+    echo 0 > "$PWM_PATH/enable"
+fi
+
+echo 0 > "$PWM_PATH/duty_cycle"
+echo "$PWM_PERIOD_NS" > "$PWM_PATH/period"
+
+if [[ -w "$PWM_PATH/polarity" ]]; then
+    echo normal > "$PWM_PATH/polarity"
+fi
+
+# Start at full speed until the first temperature reading is processed.
+echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle"
+echo 1 > "$PWM_PATH/enable"
+
+logger -t cometen-fan \
+    "PWM fan controller started: chip=$(basename "$PWM_CHIP") device=$PWM_DEVICE_MATCH period=${PWM_PERIOD_NS}ns"
+
+last_percent=-1
+
 while true; do
-    raw_temp=$(cat "$TEMP_FILE")
-    temp_c=$((raw_temp / 1000))
-    current_state=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
-    max_state=$(cat "$MAX_STATE_FILE" 2>/dev/null || echo 4)
+    raw_temp="$(cat "$TEMP_FILE")"
+    temp_c=$(( raw_temp / 1000 ))
 
     if (( temp_c >= 65 )); then
-        wanted_state=4
+        percent=100
     elif (( temp_c >= 57 )); then
-        wanted_state=3
+        percent=70
     elif (( temp_c >= 50 )); then
-        wanted_state=2
-    elif (( temp_c >= 43 )); then
-        wanted_state=1
-    elif (( temp_c < 40 )); then
-        wanted_state=0
+        percent=45
+    elif (( temp_c >= 42 )); then
+        percent=30
     else
-        # 40-42 C is the hysteresis band. Do not start a stopped fan here,
-        # but do not stop a fan that is already running either.
-        if (( current_state > 0 )); then
-            wanted_state=1
-        else
-            wanted_state=0
-        fi
+        percent=20
     fi
 
-    if (( wanted_state > max_state )); then
-        wanted_state=$max_state
+    if (( percent != last_percent )); then
+        set_duty_percent "$percent"
+        logger -t cometen-fan "temp=${temp_c}C pwm=${percent}%"
+        last_percent="$percent"
     fi
 
-    if [[ "$wanted_state" != "$current_state" ]]; then
-        echo "$wanted_state" > "$STATE_FILE"
-        logger -t cometen-fan "temp=${temp_c}C state ${current_state}->${wanted_state}"
-    fi
-
-    sleep 2
+    sleep "$POLL_SECONDS"
 done
