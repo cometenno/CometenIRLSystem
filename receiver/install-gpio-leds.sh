@@ -25,7 +25,7 @@ fi
 
 echo "Installerer GPIO-støtte for Cometen IRL Alerts..."
 sudo apt update
-sudo apt install -y gpiod python3-libgpiod
+sudo apt install -y gpiod python3-libgpiod v4l-utils
 
 if ! getent group gpio >/dev/null 2>&1; then
   sudo groupadd --system gpio
@@ -54,6 +54,7 @@ echo
 echo "GPIO-støtte er installert."
 echo "Bruker ${TARGET_USER} er lagt i gruppen gpio."
 echo "Video-probe er installert som root-tjeneste: ${VIDEO_SERVICE}"
+echo "v4l-utils er installert for HDMI-RX signal-lock deteksjon."
 echo
 echo "Status video-probe:"
 echo "  sudo systemctl status ${VIDEO_SERVICE} --no-pager"
