@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -u
+
+# CometenIRLAlerts - WPS200 Bluetooth watchdog v2.0
+#
+# Recovery ladder:
+#   1) normal reconnect attempts
+#   2) Bluetooth controller power-cycle + WirePlumber restart
+#   3) BlueZ service restart + WirePlumber restart
+#
+# The device MAC is not stored in GitHub. It can be supplied through
+# /etc/default/cometen-wps200 as WPS200_MAC, otherwise the script discovers
+# the paired device whose Name/Alias matches WPS200_NAME.
+
+AUDIO_USER="${COMETEN_AUDIO_USER:-user}"
+WPS200_NAME="${WPS200_NAME:-WPS200}"
+MAC="${WPS200_MAC:-}"
+CHECK_SECONDS="${WPS200_CHECK_SECONDS:-5}"
+CONNECT_TIMEOUT="${WPS200_CONNECT_TIMEOUT:-8}"
+POWER_CYCLE_AFTER="${WPS200_POWER_CYCLE_AFTER:-3}"
+BLUEZ_RESTART_AFTER="${WPS200_BLUEZ_RESTART_AFTER:-6}"
+
+TAG="cometen-wps200-watchdog"
+failures=0
+
+log() {
+    logger -t "$TAG" -- "$*"
+    echo "$*"
+}
+
+find_mac() {
+    local candidate info
+
+    if [[ -n "$MAC" ]]; then
+        return 0
+    fi
+
+    while read -r _ candidate; do
+        [[ -n "${candidate:-}" ]] || continue
+        info="$(/usr/bin/bluetoothctl info "$candidate" 2>/dev/null || true)"
+        if grep -Eq "^[[:space:]]*(Name|Alias):[[:space:]]*${WPS200_NAME}[[:space:]]*$" <<<"$info"; then
+            MAC="$candidate"
+            log "Discovered ${WPS200_NAME} as paired device ${MAC}"
+            return 0
+        fi
+    done < <(/usr/bin/bluetoothctl paired-devices 2>/dev/null || true)
+
+    return 1
+}
+
+is_connected() {
+    [[ -n "$MAC" ]] || return 1
+    /usr/bin/bluetoothctl info "$MAC" 2>/dev/null | /usr/bin/grep -q "Connected: yes"
+}
+
+restart_wireplumber() {
+    log "Restarting WirePlumber for user ${AUDIO_USER}"
+    /usr/bin/systemctl --user --machine="${AUDIO_USER}@.host" restart wireplumber.service >/dev/null 2>&1 || true
+    sleep 2
+}
+
+power_on() {
+    /usr/bin/bluetoothctl power on >/dev/null 2>&1 || true
+}
+
+connect_once() {
+    local output rc
+
+    find_mac || {
+        log "No paired ${WPS200_NAME} found yet"
+        return 1
+    }
+
+    power_on
+    log "Attempting to connect to ${WPS200_NAME}"
+
+    output="$(/usr/bin/timeout "$CONNECT_TIMEOUT" /usr/bin/bluetoothctl connect "$MAC" 2>&1)"
+    rc=$?
+
+    if (( rc == 0 )) && is_connected; then
+        log "Connection successful"
+        return 0
+    fi
+
+    if [[ -n "$output" ]]; then
+        log "Connect failed: ${output//$'\n'/ | }"
+    else
+        log "Connect failed with rc=${rc}"
+    fi
+    return 1
+}
+
+controller_power_cycle() {
+    log "Recovery level 1: Bluetooth controller power-cycle"
+    /usr/bin/bluetoothctl power off >/dev/null 2>&1 || true
+    sleep 2
+    /usr/bin/bluetoothctl power on >/dev/null 2>&1 || true
+    sleep 3
+    restart_wireplumber
+}
+
+restart_bluez() {
+    log "Recovery level 2: restarting bluetooth.service"
+    /usr/bin/systemctl restart bluetooth.service || true
+    sleep 4
+    power_on
+    restart_wireplumber
+}
+
+# Give user-systemd/PipeWire/WirePlumber time to come up after boot.
+sleep 3
+restart_wireplumber
+
+while true; do
+    if is_connected; then
+        if (( failures > 0 )); then
+            log "${WPS200_NAME} recovered after ${failures} failed attempt(s)"
+        fi
+        failures=0
+        sleep "$CHECK_SECONDS"
+        continue
+    fi
+
+    if connect_once; then
+        failures=0
+        sleep "$CHECK_SECONDS"
+        continue
+    fi
+
+    failures=$((failures + 1))
+    log "Reconnect failure ${failures}/${BLUEZ_RESTART_AFTER}"
+
+    if (( failures >= BLUEZ_RESTART_AFTER )); then
+        restart_bluez
+        failures=0
+        connect_once || true
+    elif (( failures == POWER_CYCLE_AFTER )); then
+        controller_power_cycle
+        connect_once || true
+    fi
+
+    sleep "$CHECK_SECONDS"
+done
