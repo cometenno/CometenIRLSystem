@@ -14,30 +14,55 @@ if [[ ! -f "$WATCHDOG_SRC" || ! -f "$SERVICE_SRC" ]]; then
 fi
 
 find_wps200_mac() {
-    local candidate info
+    local candidate info paired name
+    local -A seen=()
+
     while read -r _ candidate; do
         [[ -n "${candidate:-}" ]] || continue
+        [[ -z "${seen[$candidate]:-}" ]] || continue
+        seen[$candidate]=1
+
         info="$(bluetoothctl info "$candidate" 2>/dev/null || true)"
-        if grep -Eq '^[[:space:]]*(Name|Alias):[[:space:]]*WPS200[[:space:]]*$' <<<"$info"; then
+        [[ -n "$info" ]] || continue
+
+        name="$(sed -n -E 's/^[[:space:]]*(Name|Alias):[[:space:]]*(.*)$/\2/p' <<<"$info" | head -1)"
+        paired="$(sed -n -E 's/^[[:space:]]*Paired:[[:space:]]*(yes|no).*$/\1/p' <<<"$info" | head -1)"
+
+        if [[ "$name" == "WPS200" && "$paired" == "yes" ]]; then
             echo "$candidate"
             return 0
         fi
-    done < <(bluetoothctl paired-devices 2>/dev/null || true)
+    done < <(
+        {
+            bluetoothctl paired-devices 2>/dev/null || true
+            bluetoothctl devices Paired 2>/dev/null || true
+            bluetoothctl devices 2>/dev/null || true
+        } | awk 'NF >= 2 && $1 == "Device" {print $1, $2}'
+    )
+
     return 1
 }
 
 MAC="$(find_wps200_mac || true)"
 
+# Existing v2 install: reuse local environment file.
 if [[ -z "$MAC" && -f "$ENV_DST" ]]; then
     MAC="$(sed -n 's/^WPS200_MAC=//p' "$ENV_DST" | head -1)"
 fi
 
+# Migration from the original watchdog, where the MAC was stored directly
+# in /usr/local/sbin/cometen-wps200-watchdog.
+if [[ -z "$MAC" && -f "$WATCHDOG_DST" ]]; then
+    MAC="$(sed -n -E 's/^MAC="([^"]+)".*$/\1/p' "$WATCHDOG_DST" | head -1)"
+fi
+
 if [[ -z "$MAC" ]]; then
-    echo "Fant ingen paret WPS200. Par/trust høyttaleren først, og kjør scriptet på nytt." >&2
+    echo "Fant ingen paret WPS200 og ingen eksisterende lokal WPS200-konfigurasjon." >&2
+    echo "Kontroller med: bluetoothctl devices && bluetoothctl info <adresse>" >&2
     exit 1
 fi
 
-echo "Installerer Cometen WPS200 watchdog v2..."
+echo "Installerer Cometen WPS200 watchdog v2.1..."
 
 sudo install -m 0755 "$WATCHDOG_SRC" "$WATCHDOG_DST"
 sudo install -m 0644 "$SERVICE_SRC" "$SERVICE_DST"
