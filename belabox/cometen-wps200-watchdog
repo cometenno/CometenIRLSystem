@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
-# CometenIRLAlerts - WPS200 Bluetooth watchdog v2.0
+# CometenIRLAlerts - WPS200 Bluetooth watchdog v2.1
 #
 # Recovery ladder:
 #   1) normal reconnect attempts
@@ -77,6 +77,11 @@ connect_once() {
     output="$(/usr/bin/timeout "$CONNECT_TIMEOUT" /usr/bin/bluetoothctl connect "$MAC" 2>&1)"
     rc=$?
 
+    # BlueZ may report success a fraction before the Connected property is updated.
+    if (( rc == 0 )); then
+        sleep 1
+    fi
+
     if (( rc == 0 )) && is_connected; then
         log "Connection successful"
         return 0
@@ -108,8 +113,13 @@ restart_bluez() {
 }
 
 # Give user-systemd/PipeWire/WirePlumber time to come up after boot.
+# Do not disturb an already-working live connection when this service is
+# manually restarted during a stream.
 sleep 3
-restart_wireplumber
+find_mac || true
+if ! is_connected; then
+    restart_wireplumber
+fi
 
 while true; do
     if is_connected; then
