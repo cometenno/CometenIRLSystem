@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ STATUS_PATH = Path("/run/cometen-irl-video-status.json")
 DEFAULT_PROCESS = "belacoder"
 DEFAULT_DEVICES = ("/dev/usb_capture", "/dev/hdmirx", "/dev/hdmi_capture")
 HDMI_RX_DEVICE = "/dev/hdmirx"
+PIPELINE_PATH = Path("/tmp/belacoder_pipeline")
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -172,12 +175,8 @@ def hdmi_rx_signal_present(device: str = HDMI_RX_DEVICE) -> tuple[bool, str]:
     return False, "zero-timings"
 
 
-def source_state(devices: dict[str, str]) -> tuple[bool, str, str]:
-    """Return (source_present, resolved_device, detail).
-
-    USB capture devices are treated as present when the device node exists.
-    HDMI-RX is special: it must also report a valid signal lock.
-    """
+def local_source_state(devices: dict[str, str]) -> tuple[bool, str, str]:
+    """Return (source_present, resolved_device, detail) for local video inputs."""
     for configured, resolved in devices.items():
         if configured == HDMI_RX_DEVICE:
             present, detail = hdmi_rx_signal_present(configured)
@@ -193,7 +192,65 @@ def source_state(devices: dict[str, str]) -> tuple[bool, str, str]:
         present, detail = hdmi_rx_signal_present(HDMI_RX_DEVICE)
         return present, devices[HDMI_RX_DEVICE], detail
 
-    return False, "", "no-source"
+    return False, "", "no-local-source"
+
+
+def rtmp_source_state(config: dict[str, Any]) -> tuple[bool | None, str, str]:
+    """Return RTMP publisher state from the local nginx-rtmp stat endpoint.
+
+    The Action camera/Mimo path publishes to /publish/live. nginx-rtmp only
+    lists the stream while a publisher is actually connected, so this gives us
+    a real source-presence signal without relying on a local /dev/video node.
+    """
+    settings = config.get("status_leds", {})
+    if not isinstance(settings, dict):
+        settings = {}
+
+    status_url = str(settings.get("camera_status_url", "http://127.0.0.1/stat")).strip()
+    app_name = str(settings.get("camera_app", "publish")).strip() or "publish"
+    stream_name = str(settings.get("camera_stream", "live")).strip() or "live"
+    descriptor = f"rtmp:{app_name}/{stream_name}"
+
+    if not status_url:
+        return None, descriptor, "rtmp-stat-disabled"
+
+    try:
+        request = urllib.request.Request(
+            status_url,
+            headers={"User-Agent": "CometenIRLAlerts/video-probe"},
+        )
+        with urllib.request.urlopen(request, timeout=1.5) as response:
+            body = response.read()
+        root = ET.fromstring(body)
+    except Exception:
+        return None, descriptor, "rtmp-stat-unavailable"
+
+    wanted_app = app_name.lower()
+    wanted_stream = stream_name.lower()
+    for application in root.findall(".//application"):
+        current_app = (application.findtext("name") or "").strip().lower()
+        if current_app != wanted_app:
+            continue
+        for stream in application.findall(".//stream"):
+            current_stream = (stream.findtext("name") or "").strip().lower()
+            if current_stream == wanted_stream:
+                return True, descriptor, f"rtmp-publisher:{app_name}/{stream_name}"
+
+    return False, descriptor, f"rtmp-missing:{app_name}/{stream_name}"
+
+
+def pipeline_source_kind() -> str:
+    """Identify the currently generated BELABOX input pipeline when possible."""
+    try:
+        text = PIPELINE_PATH.read_text(encoding="utf-8", errors="ignore").lower()
+    except Exception:
+        return "unknown"
+
+    if "rtmpsrc" in text:
+        return "rtmp"
+    if "v4l2src" in text:
+        return "local"
+    return "unknown"
 
 
 def write_status(payload: dict[str, Any]) -> None:
@@ -215,25 +272,86 @@ def run(config_path: Path) -> None:
     while True:
         roots = process_tree_roots(process)
         tree = process_tree(roots) if roots else []
-        devices = resolved_devices(config)
-
-        source_present, source_device, source_detail = source_state(devices)
-        pipeline_active, pipeline_device, owner_pid = find_open_video_device(tree, devices)
         encoder_running = bool(roots)
+        mode = pipeline_source_kind() if encoder_running else "stopped"
+
+        devices = resolved_devices(config)
+        local_present, local_device, local_detail = local_source_state(devices)
+        local_pipeline_active, pipeline_device, owner_pid = find_open_video_device(tree, devices)
+        rtmp_present, rtmp_device, rtmp_detail = rtmp_source_state(config)
+
+        source_present = local_present
+        source_detail = local_detail
+        source_device = local_device
+        pipeline_active = local_pipeline_active
+
+        if encoder_running and mode == "rtmp":
+            # RTMP pipelines do not hold a /dev/video node open. Validate the
+            # publisher instead and combine it with the running encoder state.
+            source_present = rtmp_present is True
+            source_detail = rtmp_detail
+            source_device = rtmp_device
+            pipeline_active = rtmp_present is True
+            pipeline_device = rtmp_device if pipeline_active else ""
+            owner_pid = roots[0] if pipeline_active else None
+        elif encoder_running and mode == "local":
+            # Keep the proven V4L2/HDMI logic for USB and HDMI capture inputs.
+            source_present = local_present
+            source_detail = local_detail
+            source_device = local_device
+            pipeline_active = local_pipeline_active
+        elif encoder_running:
+            # Unknown pipeline format: prefer a confirmed local device handle,
+            # otherwise accept a confirmed RTMP publisher as the active source.
+            if local_pipeline_active:
+                source_present = local_present
+                source_detail = local_detail
+                source_device = local_device
+                pipeline_active = True
+            elif rtmp_present is True:
+                source_present = True
+                source_detail = rtmp_detail
+                source_device = rtmp_device
+                pipeline_active = True
+                pipeline_device = rtmp_device
+                owner_pid = roots[0]
+            else:
+                pipeline_active = False
+        else:
+            # Encoder stopped: yellow LED means any real camera source is ready.
+            if rtmp_present is True:
+                source_present = True
+                source_detail = rtmp_detail
+                source_device = rtmp_device
+            elif local_present:
+                source_present = True
+                source_detail = local_detail
+                source_device = local_device
+            elif rtmp_present is False:
+                source_present = False
+                source_detail = rtmp_detail
+                source_device = rtmp_device
+            else:
+                source_present = local_present
+                source_detail = local_detail
+                source_device = local_device
+            pipeline_active = False
+            pipeline_device = ""
+            owner_pid = None
 
         # Yellow LED semantics:
         # - Encoder stopped: show whether a REAL source is available.
-        #   HDMI-RX requires a valid DV-timings lock, not just /dev/video0.
-        # - Encoder running: require the encoder pipeline to hold a video device open.
+        # - Encoder running: require the selected BELABOX input pipeline to be active.
         video_active = pipeline_active if encoder_running else source_present
 
         write_status(
             {
-                "version": 3,
+                "version": 4,
                 "updated_unix": time.time(),
                 "encoder_running": encoder_running,
                 "source_present": source_present,
                 "source_detail": source_detail,
+                "pipeline_source": mode,
                 "pipeline_active": pipeline_active,
                 "active": video_active,
                 "device": pipeline_device or source_device,
@@ -254,11 +372,12 @@ def main() -> int:
         try:
             write_status(
                 {
-                    "version": 3,
+                    "version": 4,
                     "updated_unix": time.time(),
                     "encoder_running": False,
                     "source_present": False,
                     "source_detail": "probe-error",
+                    "pipeline_source": "unknown",
                     "pipeline_active": False,
                     "active": False,
                     "device": "",
