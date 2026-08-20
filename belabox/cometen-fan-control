@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CometenIRLAlerts - ROCK 5B+ external Noctua PWM fan controller v2.0
+# CometenIRLAlerts - ROCK 5B+ external Noctua PWM fan controller v2.1
 #
 # Hardware:
 #   ROCK 5B+ GPIO pin 3 -> PWM15-M1 -> Noctua blue PWM wire
@@ -21,6 +21,10 @@ set -euo pipefail
 #
 # The script detects the correct pwmchip dynamically, so it does not depend
 # on Linux assigning PWM15 to pwmchip1 every boot.
+#
+# v2.1 fixes startup on a freshly exported PWM channel where Linux exposes
+# period=0. Writing duty_cycle while period is zero is rejected with EINVAL,
+# so the controller now establishes a valid period before touching duty_cycle.
 
 TEMP_FILE="/sys/class/thermal/thermal_zone0/temp"
 PWM_DEVICE_MATCH="febf0030.pwm"
@@ -40,6 +44,48 @@ find_pwmchip() {
     return 1
 }
 
+read_pwm_int() {
+    local file="$1"
+    local value
+    value="$(cat "$file" 2>/dev/null || echo 0)"
+    [[ "$value" =~ ^[0-9]+$ ]] || value=0
+    echo "$value"
+}
+
+prepare_pwm_disabled() {
+    local current_period current_duty
+
+    if [[ "$(read_pwm_int "$PWM_PATH/enable")" != "0" ]]; then
+        echo 0 > "$PWM_PATH/enable"
+    fi
+
+    current_period="$(read_pwm_int "$PWM_PATH/period")"
+    current_duty="$(read_pwm_int "$PWM_PATH/duty_cycle")"
+
+    # A fresh sysfs PWM export can report period=0. The kernel rejects any
+    # duty_cycle write in that state, even duty_cycle=0. Set period first.
+    if (( current_period <= 0 )); then
+        echo "$PWM_PERIOD_NS" > "$PWM_PATH/period"
+        current_period="$PWM_PERIOD_NS"
+        current_duty=0
+    elif (( current_period != PWM_PERIOD_NS )); then
+        # duty_cycle must never be greater than the new period.
+        if (( current_duty > PWM_PERIOD_NS )); then
+            echo 0 > "$PWM_PATH/duty_cycle"
+            current_duty=0
+        fi
+        echo "$PWM_PERIOD_NS" > "$PWM_PATH/period"
+        current_period="$PWM_PERIOD_NS"
+    fi
+
+    # period is valid now, so duty_cycle writes are safe.
+    echo 0 > "$PWM_PATH/duty_cycle"
+
+    if [[ -w "$PWM_PATH/polarity" ]]; then
+        echo normal > "$PWM_PATH/polarity"
+    fi
+}
+
 set_duty_percent() {
     local percent="$1"
     local duty=$(( PWM_PERIOD_NS * percent / 100 ))
@@ -47,9 +93,31 @@ set_duty_percent() {
 }
 
 failsafe_full_speed() {
-    if [[ -n "${PWM_PATH:-}" && -d "${PWM_PATH:-}" ]]; then
-        echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle" 2>/dev/null || true
+    local current_period current_duty
+
+    [[ -n "${PWM_PATH:-}" && -d "${PWM_PATH:-}" ]] || return 0
+
+    # Never let a cleanup error mask the original service exit.
+    set +e
+
+    if [[ "$(read_pwm_int "$PWM_PATH/enable")" != "0" ]]; then
+        echo 0 > "$PWM_PATH/enable" 2>/dev/null
     fi
+
+    current_period="$(read_pwm_int "$PWM_PATH/period")"
+    current_duty="$(read_pwm_int "$PWM_PATH/duty_cycle")"
+
+    if (( current_period <= 0 )); then
+        echo "$PWM_PERIOD_NS" > "$PWM_PATH/period" 2>/dev/null
+    elif (( current_period != PWM_PERIOD_NS )); then
+        if (( current_duty > PWM_PERIOD_NS )); then
+            echo 0 > "$PWM_PATH/duty_cycle" 2>/dev/null
+        fi
+        echo "$PWM_PERIOD_NS" > "$PWM_PATH/period" 2>/dev/null
+    fi
+
+    echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle" 2>/dev/null
+    echo 1 > "$PWM_PATH/enable" 2>/dev/null
 }
 
 [[ -r "$TEMP_FILE" ]] || {
@@ -80,24 +148,14 @@ fi
 # If the service exits or is stopped, leave the fan at full speed.
 trap failsafe_full_speed EXIT INT TERM
 
-# Configure PWM safely.
-if [[ "$(cat "$PWM_PATH/enable" 2>/dev/null || echo 0)" != "0" ]]; then
-    echo 0 > "$PWM_PATH/enable"
-fi
-
-echo 0 > "$PWM_PATH/duty_cycle"
-echo "$PWM_PERIOD_NS" > "$PWM_PATH/period"
-
-if [[ -w "$PWM_PATH/polarity" ]]; then
-    echo normal > "$PWM_PATH/polarity"
-fi
+prepare_pwm_disabled
 
 # Start at full speed until the first temperature reading is processed.
 echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle"
 echo 1 > "$PWM_PATH/enable"
 
 logger -t cometen-fan \
-    "PWM fan controller started: chip=$(basename "$PWM_CHIP") device=$PWM_DEVICE_MATCH period=${PWM_PERIOD_NS}ns"
+    "PWM fan controller v2.1 started: chip=$(basename "$PWM_CHIP") device=$PWM_DEVICE_MATCH period=${PWM_PERIOD_NS}ns"
 
 last_percent=-1
 
