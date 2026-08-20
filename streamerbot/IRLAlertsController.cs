@@ -4,11 +4,12 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading;
 
-// CometenIRLAlerts - BELABOX ingest watchdog v10
+// CometenIRLAlerts - BELABOX ingest watchdog v11
 // Test mode: CometenIRL_WatchdogLiveOnly missing/false = runs while OBS is offline.
 // Production: set CometenIRL_WatchdogLiveOnly = true.
 // CometenIRL_WatchdogArmed controls scene authority independently of telemetry.
 // Missing CometenIRL_WatchdogArmed defaults to true for backwards compatibility.
+// v11 self-heals scene authority: BELABOX SRT auto-arms while OBS is streaming or IRL mode is active.
 // OBS scene switching uses CPH.ObsSetScene(), verified against the configured OBS connection.
 
 public class CPHInline
@@ -32,6 +33,7 @@ public class CPHInline
     private const string VarRecoverChecks = "CometenIRL_BelaboxRecoverChecks";
     private const string VarLiveOnly = "CometenIRL_WatchdogLiveOnly";
     private const string VarArmed = "CometenIRL_WatchdogArmed";
+    private const string VarIrlMode = "CometenIRL_IrlMode";
 
     private const string VarConnected = "CometenIRL_BelaboxConnected";
     private const string VarBitrate = "CometenIRL_BelaboxBitrate";
@@ -56,12 +58,29 @@ public class CPHInline
         bool obsStreaming = CPH.ObsIsStreaming(ObsConnection);
         bool liveOnly = GetBool(VarLiveOnly, false);
         bool armed = GetBool(VarArmed, true);
+        bool irlMode = GetBool(VarIrlMode, false);
         string currentScene = CPH.ObsGetCurrentScene(ObsConnection) ?? string.Empty;
+        string returnScene = GetString(VarDefaultReturnScene, DefaultReturnScene);
+
+        // Self-heal scene authority. A manual switch to BELABOX SRT must not leave
+        // the failover watchdog disarmed during an active stream/IRL session.
+        if (!armed
+            && string.Equals(currentScene, returnScene, StringComparison.Ordinal)
+            && (obsStreaming || irlMode))
+        {
+            armed = true;
+            CPH.SetGlobalVar(VarArmed, true, true);
+            CPH.LogWarn(
+                "CometenIRL Watchdog: auto-armed on scene '" + currentScene
+                + "' because " + (obsStreaming ? "OBS is streaming" : "IRL mode is active") + "."
+            );
+        }
 
         CPH.LogInfo(
             "CometenIRL DIAG: tick obsStreaming=" + obsStreaming
             + " liveOnly=" + liveOnly
             + " armed=" + armed
+            + " irlMode=" + irlMode
             + " scene='" + currentScene + "'."
         );
 
