@@ -1,8 +1,8 @@
 # Architecture
 
-Last updated: 21 August 2026.
+Last updated: 22 August 2026.
 
-Cometen IRL Alerts is the central project for the IRL alert return path, BELABOX-side audio, Browser Audio, receiver health, remote control, physical status and OBS failover/recovery.
+Cometen IRL System is the central project for the IRL alert return path, BELABOX-side audio, Browser Audio, receiver health, remote control, physical status and OBS failover/recovery.
 
 ## End-to-end alert path
 
@@ -166,6 +166,10 @@ Never commit:
 relay/config.php
 receiver/config.json
 ```
+
+## Compatibility note
+
+The repository/project name is Cometen IRL System. Existing runtime identifiers such as `CometenIRL_*`, `IRLAlertsController` and `cometen-irl-alerts.service` remain intentionally unchanged for compatibility with deployed Streamer.bot actions and BELABOX services.
 
 ## Related documentation
 
