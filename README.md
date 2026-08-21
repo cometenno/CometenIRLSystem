@@ -1,6 +1,6 @@
 # Cometen IRL Alerts
 
-Cometen IRL Alerts er hovedmodulen for IRL-varsler, fjernkontroll, status og BELABOX/OBS-watchdog.
+Cometen IRL Alerts er hovedmodulen for IRL-varsler, fjernkontroll, status, Browser Audio og BELABOX/OBS-watchdog.
 
 ## Arkitektur
 
@@ -22,6 +22,12 @@ ROCK 5B+ receiver              receiver status
         |
         v
 PipeWire / Bluetooth / lokale WAV-filer
+
+Sound Alerts
+        |
+        +--> OBS Browser Source hjemme --> stream-lyd
+        |
+        +--> IRL Browser Audio på ROCK 5B+ --> PipeWire --> Bluetooth-høyttaler
 
 BELABOX Cloud ingest-stats
         |
@@ -61,6 +67,8 @@ CometenIRL_AdminControl
 - automatisk recovery tilbake til `BELABOX SRT` / tidligere scene
 - live-only gating med `CometenIRL_WatchdogLiveOnly=true`
 - remote-control-kommandoer for status, volum, mute/unmute og alert-test
+- Sound Alerts Browser Source på ROCK 5B+ via lokal Playwright Chromium
+- samtidig Sound Alerts-avspilling i OBS hjemme og på Bluetooth-høyttaleren via BELABOX
 
 ## Watchdog-status
 
@@ -104,6 +112,25 @@ Detaljert oppsett:
 
 [`docs/ADMIN_CONTROL_NO.md`](docs/ADMIN_CONTROL_NO.md)
 
+## IRL Browser Audio / Sound Alerts
+
+Browser Audio åpner den samme Sound Alerts Browser Source-URL-en som brukes i OBS på en lokal Chromium-instans på ROCK 5B+. Lyden går deretter via PipeWire til Bluetooth-høyttaleren ute.
+
+Full dobbeltklient-test ble produksjonsverifisert **21. august 2026**:
+
+```text
+Sound Alerts -> OBS hjemme
+            -> BELABOX -> Chromium -> PipeWire -> soundcore Select 4 Go
+```
+
+Samme test-alert ble hørt samtidig både i OBS og på Bluetooth-høyttaleren.
+
+Komplett installasjon, oppdatering og feilsøking:
+
+[`docs/BROWSER_AUDIO_NO.md`](docs/BROWSER_AUDIO_NO.md)
+
+Browser Source-URL-en er privat og skal kun ligge lokalt i gitignored `receiver/config.json`.
+
 ## Installer / oppdater
 
 Kanonisk installasjonsguide:
@@ -132,6 +159,8 @@ cd ~/CometenIRLAlerts/receiver
 bash install-gpio-leds.sh
 ```
 
+Browser Audio installeres separat som en del av samme prosjekt når Sound Alerts skal speiles til IRL-høyttaleren. Se `docs/BROWSER_AUDIO_NO.md`.
+
 ## Viktige guider
 
 - [`docs/INSTALLASJON_NO.md`](docs/INSTALLASJON_NO.md) - komplett installasjon
@@ -139,6 +168,7 @@ bash install-gpio-leds.sh
 - [`docs/ADMIN_CONTROL_NO.md`](docs/ADMIN_CONTROL_NO.md) - IRL admin chat, OBS start/stopp, scene og Channel Points
 - [`docs/BELABOX_ROCK5B_HEADLESS_NO.md`](docs/BELABOX_ROCK5B_HEADLESS_NO.md) - headless ROCK 5B+/Bluetooth/PipeWire
 - [`docs/REMOTE_CONTROL_NO.md`](docs/REMOTE_CONTROL_NO.md) - remote control
+- [`docs/BROWSER_AUDIO_NO.md`](docs/BROWSER_AUDIO_NO.md) - Sound Alerts Browser Source til BELABOX/Bluetooth
 - [`docs/STATUS_LEDS_NO.md`](docs/STATUS_LEDS_NO.md) - LED-status
 - [`docs/streamerbot-setup.md`](docs/streamerbot-setup.md) - Streamer.bot
 - [`docs/relay-setup.md`](docs/relay-setup.md) - webrelay
@@ -188,13 +218,14 @@ relay/config.php
 receiver/config.json
 ```
 
-Aldri hardkod:
+Aldri hardkod eller publiser:
 
 - sender-token
 - receiver-token
 - databasepassord
 - BELABOX stream-ID
+- Sound Alerts Browser Source-URL/token
 
 ## Designregel
 
-Alertlevering, remote control, heartbeat, LED-status, BELABOX/SRT-watchdog, OBS-failover, IRL admin-kontroll og videre diagnostikk skal samles og koordineres i dette prosjektet.
+Alertlevering, remote control, Browser Audio, heartbeat, LED-status, BELABOX/SRT-watchdog, OBS-failover, IRL admin-kontroll og videre diagnostikk skal samles og koordineres i dette prosjektet.
