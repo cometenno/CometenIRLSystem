@@ -1,25 +1,27 @@
-# Oppsett av receiver på ROCK 5B+
+# Receiver setup
 
-Sist oppdatert: 16. august 2026.
+The receiver runs on the ROCK 5B+/BELABOX and is responsible for polling the relay, playing local alert audio, executing supported remote-control actions, reporting status and returning control results.
 
-Receiveren kjører ved siden av BELABOX og bruker samme repo som heartbeat, remote control og statusfunksjoner.
+## Files
 
-## 1. Klon repoet
+Primary files:
 
-```bash
-cd ~
-git clone https://github.com/la1ona/CometenIRLAlerts.git
-cd CometenIRLAlerts/receiver
+```text
+receiver/receiver.py
+receiver/run_receiver.py
+receiver/config.example.json
+receiver/install-user-service.sh
 ```
 
-Ved senere oppdatering:
+Private configuration:
 
-```bash
-cd ~/CometenIRLAlerts
-git pull
+```text
+receiver/config.json
 ```
 
-## 2. Lag lokal config
+`config.json` is gitignored and must never be committed.
+
+## Create local configuration
 
 ```bash
 cd ~/CometenIRLAlerts/receiver
@@ -27,147 +29,184 @@ cp config.example.json config.json
 nano config.json
 ```
 
-Minimum må ha korrekt:
+At minimum configure:
 
-```text
-relay_base_url
-receiver_token
-```
+- relay base URL
+- receiver token
+- sounds directory/default sound
+- heartbeat identity/interval
+- PipeWire sink matching
+- any Browser Audio fields in use
 
-Heartbeat-standard:
-
-```json
-"heartbeat_receiver_id": "belabox",
-"heartbeat_interval_seconds": 30,
-"heartbeat_timeout_seconds": 5
-```
-
-Ikke sett heartbeat tilbake til 1 sekund. Det utløste `HTTP 429 Too Many Requests` på webhotellet.
-
-Valider:
+Validate:
 
 ```bash
 python3 -m json.tool config.json >/dev/null && echo "config.json OK"
 ```
 
-## 3. Legg inn lokale lydfiler
+## Local sound files
 
-Legg PCM WAV-filer i:
+Store alert files under:
 
 ```text
-~/CometenIRLAlerts/receiver/sounds/
+receiver/sounds/
 ```
 
-Test:
+Recommended format:
+
+- WAV
+- PCM
+- 16-bit
+- 44.1 or 48 kHz
+
+Test locally:
 
 ```bash
-pw-play ~/CometenIRLAlerts/receiver/sounds/test.wav
+pw-play sounds/test.wav
 ```
 
-## 4. Installer user services
+## PipeWire and Bluetooth
 
-Bruk user-systemd. Dette er viktig fordi PipeWire/WirePlumber og Bluetooth-lyd kjører i brukerens sesjon.
+Check current audio graph:
 
-Kjør:
+```bash
+wpctl status
+```
+
+The receiver resolves a configured Audio/Sink match dynamically rather than depending permanently on a single PipeWire node number.
+
+This matters because node IDs can change after reconnect/reboot.
+
+See [BELABOX Headless Setup](BELABOX_HEADLESS.md) for Bluetooth pairing and headless audio routing.
+
+## Audio keepalive
+
+The receiver can keep the Bluetooth/PipeWire audio path alive using `pw-cat`.
+
+The tested pattern is based on:
+
+```text
+pw-cat --playback --rate=48000 --channels=2 --format=s16 -
+```
+
+Do not add unsupported options such as `--raw` without testing against the PipeWire version installed on BELABOX.
+
+## Install user services
+
+Use the project installer:
 
 ```bash
 cd ~/CometenIRLAlerts/receiver
 bash install-user-service.sh
 ```
 
-Skriptet installerer nå begge:
+This installs/updates:
 
 ```text
 cometen-irl-alerts.service
 cometen-irl-heartbeat.service
 ```
 
-Aktiver linger én gang:
+Enable lingering once:
 
 ```bash
 sudo loginctl enable-linger "$USER"
 ```
 
-## 5. Kontroller tjenester
+## Service status
 
-Alert-receiver:
+Receiver:
 
 ```bash
 systemctl --user status cometen-irl-alerts.service
-journalctl --user -u cometen-irl-alerts.service -n 30 --no-pager
+journalctl --user -u cometen-irl-alerts.service -n 100 --no-pager
 ```
 
 Heartbeat:
 
 ```bash
 systemctl --user status cometen-irl-heartbeat.service
-journalctl --user -u cometen-irl-heartbeat.service -n 30 --no-pager
+journalctl --user -u cometen-irl-heartbeat.service -n 100 --no-pager
 ```
 
-For heartbeat skal oppstart vise omtrent:
+## Supported receiver responsibilities
+
+The receiver handles:
+
+- alert event playback
+- volume set/up/down
+- mute/unmute
+- expanded IRL status
+- test alert
+- Browser Audio configuration/control actions
+- event acknowledgements
+- control result publishing
+
+It does **not** act as the automatic OBS scene switcher. The BELABOX ingest watchdog on the streaming PC owns automatic signal-loss/recovery scene changes.
+
+## Expanded status
+
+`run_receiver.py` installs the expanded status wrapper used by `!irlstatus`.
+
+Typical output includes:
 
 ```text
-Cometen IRL heartbeat started: receiver_id=belabox interval=30.0s
+IRL: SYS OK | 51C Fan0/4 | soundcore Select 4 Go OK n33 | VIDEO ... | ENC ... | WiFi ... | Up ...
 ```
 
-## 6. Restart etter config-endring
+The exact node number is dynamic and is only diagnostic.
 
-```bash
-systemctl --user restart cometen-irl-alerts.service
-systemctl --user restart cometen-irl-heartbeat.service
+## Browser Audio
+
+Browser Audio is a separate supervisor service in the same project:
+
+```text
+cometen-irl-browser-audio.service
 ```
 
-## 7. Oppdater eksisterende installasjon
+It launches headless Chromium processes for configured Browser Sources and routes audio through the selected PipeWire sink.
+
+See [Browser Audio](BROWSER_AUDIO.md).
+
+## Update workflow
 
 ```bash
 cd ~/CometenIRLAlerts
 git pull
 cd receiver
 bash install-user-service.sh
+systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
 ```
 
-Dette oppdaterer de genererte user-service-filene og starter/aktiverer begge tjenester.
+Restart Browser Audio separately if its code changed:
 
-## 8. Bluetooth/PipeWire
+```bash
+systemctl --user restart cometen-irl-browser-audio.service
+```
 
-Kontroller sinks:
+## Troubleshooting
+
+Useful commands:
 
 ```bash
 wpctl status
+pw-cli ls Node
+systemctl --user status cometen-irl-alerts.service
+journalctl --user -u cometen-irl-alerts.service -n 100 --no-pager
 ```
 
-Sett standard sink:
-
-```bash
-wpctl set-default SINK_ID
-```
-
-Fullt verifisert headless-oppsett for ROCK 5B+/BELABOX:
-
-```text
-docs/BELABOX_ROCK5B_HEADLESS_NO.md
-```
-
-## 9. Heartbeat er diagnostikk
-
-Heartbeat forteller om boksen/receiveren lever. Den sier ikke nødvendigvis at kamera, GStreamer eller SRT-video er frisk.
-
-OBS-scene-failover skal derfor baseres på BELABOX Cloud ingest-stats gjennom `IRLAlertsController`, ikke heartbeat alene.
-
-Detaljer:
-
-```text
-docs/WATCHDOG_HEARTBEAT_NO.md
-```
-
-## 10. USB/video-feil
-
-Nattest 16. august 2026 viste gjentatte UVC/GStreamer-feil fra Elgato Facecam, inkludert `uvcvideo -71`, URB-resubmit-feil og eksplisitt USB-disconnect. Dette er et separat hardware/input-spor.
-
-For kun nye hendelser:
+For video/USB hardware issues:
 
 ```bash
 sudo journalctl -kf -n 0 | grep -Ei 'uvc|usb|video|v4l2|xhci|disconnect|reset|error'
 ```
 
-Videre fysisk test av kamera/kabel avventes til annet utstyr er tilgjengelig.
+Keep audio/receiver failures separate from camera/USB failures while diagnosing the system.
+
+## Related documentation
+
+- [Installation](INSTALLATION.md)
+- [Remote Control](REMOTE_CONTROL.md)
+- [Browser Audio](BROWSER_AUDIO.md)
+- [Status LEDs](STATUS_LEDS.md)
