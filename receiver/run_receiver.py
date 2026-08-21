@@ -160,13 +160,18 @@ def build_expanded_status(config: dict[str, Any]) -> str:
 def install_expanded_status() -> None:
     original_handle_control = receiver.handle_control
 
-    def handle_control(config: dict[str, Any], event: dict[str, Any], config_dir: Path) -> str:
+    def handle_control(
+        config: dict[str, Any],
+        event: dict[str, Any],
+        config_dir: Path,
+        config_path: Path,
+    ) -> str:
         action = str(event.get("message", "")).strip().lower()
         if action == "status":
             message = build_expanded_status(config)
             LOG.info("Remote control: expanded status requested: %s", message)
             return message
-        return original_handle_control(config, event, config_dir)
+        return original_handle_control(config, event, config_dir, config_path)
 
     receiver.handle_control = handle_control
 
