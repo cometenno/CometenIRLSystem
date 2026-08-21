@@ -5,18 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
-import re
 import shutil
 import socket
 import subprocess
 import threading
 import time
-import urllib.request
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 LOG = logging.getLogger("cometen-irl-alerts.leds")
 
@@ -29,6 +24,13 @@ OFF = "off"
 ON = "on"
 SLOW = "slow"
 FAST = "fast"
+
+VIDEO_STATUS_DEFAULT = Path("/run/cometen-irl-video-status.json")
+INTERNET_TARGETS = (
+    ("1.1.1.1", 443),
+    ("8.8.8.8", 53),
+    ("9.9.9.9", 443),
+)
 
 
 class GpioOutput:
@@ -89,6 +91,17 @@ class GpioOutput:
 
 
 class StatusLedController:
+    """Front-panel status LEDs for the BELABOX itself.
+
+    Semantics are deliberately local and simple:
+      green  = Internet reachable
+      blue   = configured Bluetooth speaker connected
+      yellow = real video input/feed present
+      red    = BELABOX encoder pipeline actively sending/processing that input
+
+    The relay/webhotel is intentionally NOT part of the LED logic.
+    """
+
     def __init__(self, config: dict[str, Any], force_enabled: bool = False) -> None:
         raw_settings = config.get("status_leds", {})
         self.settings = raw_settings if isinstance(raw_settings, dict) else {}
@@ -109,39 +122,37 @@ class StatusLedController:
             "red": str(self.settings.get("red_line", "PIN_40")),
         }
 
-        self.relay_base_url = str(config.get("relay_base_url", "")).strip()
         self.bluetooth_match = str(
             self.settings.get(
                 "bluetooth_sink_match",
                 config.get("remote_audio_sink_match", "WPS200"),
             )
         ).strip() or "WPS200"
-        self.bluetooth_watchdog_service = str(
-            self.settings.get("bluetooth_watchdog_service", "cometen-wps200.service")
-        ).strip()
-        self.camera_device = str(
-            self.settings.get("camera_device", "/dev/usb_capture")
-        ).strip()
-        self.camera_status_url = str(
-            self.settings.get("camera_status_url", "http://127.0.0.1/stat")
-        ).strip()
-        self.camera_app = str(self.settings.get("camera_app", "publish")).strip()
-        self.camera_stream = str(self.settings.get("camera_stream", "live")).strip()
-        self.live_process = str(self.settings.get("live_process", "belacoder")).strip()
+
+        self.video_status_path = Path(
+            str(self.settings.get("video_status_path", VIDEO_STATUS_DEFAULT))
+        )
+        self.video_status_stale_seconds = max(
+            1.0, float(self.settings.get("video_probe_stale_seconds", 3.0))
+        )
 
         self._outputs: dict[str, GpioOutput] = {}
-        self._patterns = {"green": SLOW, "blue": SLOW, "yellow": OFF, "red": OFF}
+        self._patterns = {"green": OFF, "blue": OFF, "yellow": OFF, "red": OFF}
         self._last_rendered: dict[str, bool | None] = {
             "green": None,
             "blue": None,
             "yellow": None,
             "red": None,
         }
+        self._last_states: dict[str, bool | None] = {
+            "internet": None,
+            "bluetooth": None,
+            "video_input": None,
+            "output": None,
+        }
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._ever_online = False
-        self._last_video_state: bool | None = None
 
     def _open_gpio(self) -> None:
         opened: dict[str, GpioOutput] = {}
@@ -198,323 +209,104 @@ class StatusLedController:
             output.set(False)
         self._last_rendered = {name: None for name in self._last_rendered}
 
-    def _relay_reachable(self) -> bool:
-        if not self.relay_base_url:
-            return False
-        parsed = urlparse(self.relay_base_url)
-        host = parsed.hostname
-        if not host:
-            return False
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        try:
-            with socket.create_connection((host, port), timeout=2.0):
-                return True
-        except OSError:
+    @staticmethod
+    def _internet_reachable() -> bool:
+        """Test general Internet reachability, independent of the IRL relay/webhotel."""
+        for host, port in INTERNET_TARGETS:
+            try:
+                with socket.create_connection((host, port), timeout=1.25):
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def _bluetooth_connected(self) -> bool:
+        """Return BlueZ connection state for the configured speaker name."""
+        bluetoothctl = shutil.which("bluetoothctl")
+        if bluetoothctl is None:
             return False
 
-    def _bluetooth_sink_connected(self) -> bool:
-        pw_cli = shutil.which("pw-cli")
-        if pw_cli is None:
-            return False
         try:
             completed = subprocess.run(
-                [pw_cli, "ls", "Node"],
-                check=True,
-                timeout=5,
+                [bluetoothctl, "devices"],
+                check=False,
+                timeout=4,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
             )
         except Exception:
             return False
 
-        blocks = re.split(
-            r"(?=^\s*id\s+\d+,\s+type\s+PipeWire:Interface:Node/3\s*$)",
-            completed.stdout,
-            flags=re.MULTILINE,
-        )
-        match_text = self.bluetooth_match.lower()
-        for block in blocks:
-            if 'media.class = "Audio/Sink"' not in block:
+        wanted = self.bluetooth_match.lower()
+        addresses: list[str] = []
+        for line in completed.stdout.splitlines():
+            parts = line.strip().split(maxsplit=2)
+            if len(parts) < 3 or parts[0] != "Device":
                 continue
-            if match_text in block.lower():
-                return True
-        return False
+            if wanted in parts[2].lower():
+                addresses.append(parts[1])
 
-    def _watchdog_active(self) -> bool:
-        if not self.bluetooth_watchdog_service:
-            return False
-        systemctl = shutil.which("systemctl")
-        if systemctl is None:
-            return False
-        try:
-            return subprocess.run(
-                [systemctl, "is-active", "--quiet", self.bluetooth_watchdog_service],
-                check=False,
-                timeout=5,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ).returncode == 0
-        except Exception:
-            return False
-
-    def _candidate_video_devices(self) -> list[Path]:
-        candidates: list[str] = []
-        if self.camera_device:
-            candidates.append(self.camera_device)
-        candidates.extend(("/dev/usb_capture", "/dev/hdmirx", "/dev/hdmi_capture"))
-
-        result: list[Path] = []
-        seen: set[str] = set()
-        for value in candidates:
-            value = value.strip()
-            if not value or value in seen:
-                continue
-            seen.add(value)
-            result.append(Path(value))
-        return result
-
-    @staticmethod
-    def _resolved_device(path: Path) -> str | None:
-        try:
-            if not path.exists():
-                return None
-            return os.path.realpath(str(path))
-        except Exception:
-            return None
-
-    @staticmethod
-    def _read_proc_name(pid: int) -> str:
-        try:
-            return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _read_proc_ppid(pid: int) -> int | None:
-        try:
-            for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8").splitlines():
-                if line.startswith("PPid:"):
-                    return int(line.split(":", 1)[1].strip())
-        except Exception:
-            pass
-        return None
-
-    def _all_processes(self) -> tuple[dict[int, str], dict[int, int]]:
-        names: dict[int, str] = {}
-        parents: dict[int, int] = {}
-        try:
-            entries = list(Path("/proc").iterdir())
-        except Exception:
-            return names, parents
-
-        for entry in entries:
-            if not entry.name.isdigit():
-                continue
-            pid = int(entry.name)
-            name = self._read_proc_name(pid)
-            if not name:
-                continue
-            names[pid] = name
-            ppid = self._read_proc_ppid(pid)
-            if ppid is not None:
-                parents[pid] = ppid
-        return names, parents
-
-    def _process_tree_pids(self, process_name: str) -> list[int]:
-        if not process_name:
-            return []
-
-        names, parents = self._all_processes()
-        roots = {pid for pid, name in names.items() if name == process_name}
-        if not roots:
-            return []
-
-        tree = set(roots)
-        changed = True
-        while changed:
-            changed = False
-            for pid, ppid in parents.items():
-                if pid not in tree and ppid in tree:
-                    tree.add(pid)
-                    changed = True
-        return sorted(tree)
-
-    def _process_has_video_device_open(self, pids: list[int], devices: list[Path]) -> bool | None:
-        resolved_devices = {
-            resolved
-            for device in devices
-            if (resolved := self._resolved_device(device)) is not None
-        }
-        if not resolved_devices:
-            return False
-        if not pids:
-            return False
-
-        inspected_any = False
-        for pid in pids:
-            fd_dir = Path(f"/proc/{pid}/fd")
+        for address in addresses:
             try:
-                fds = list(fd_dir.iterdir())
-                inspected_any = True
-            except PermissionError:
-                continue
+                info = subprocess.run(
+                    [bluetoothctl, "info", address],
+                    check=False,
+                    timeout=4,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).stdout
             except Exception:
                 continue
+            if "Connected: yes" in info:
+                return True
 
-            for fd in fds:
-                try:
-                    target = os.path.realpath(str(fd))
-                except Exception:
-                    continue
-                if target in resolved_devices:
-                    return True
+        return False
 
-        if inspected_any:
-            return False
-        return None
-
-    def _camera_active_from_local_pipeline(self, process_tree: list[int]) -> bool | None:
-        devices = self._candidate_video_devices()
-        existing = [device for device in devices if self._resolved_device(device) is not None]
-        if not existing:
-            return None
-        if not process_tree:
-            return False
-        return self._process_has_video_device_open(process_tree, existing)
-
-    def _camera_active_from_stat(self) -> bool | None:
-        if not self.camera_status_url:
-            return None
+    def _video_status(self) -> dict[str, Any] | None:
         try:
-            request = urllib.request.Request(
-                self.camera_status_url,
-                headers={"User-Agent": "CometenIRLAlerts/status-leds"},
-            )
-            with urllib.request.urlopen(request, timeout=2.0) as response:
-                body = response.read()
-            root = ET.fromstring(body)
+            payload = json.loads(self.video_status_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return None
+            updated = float(payload.get("updated_unix", 0) or 0)
+            if updated <= 0:
+                return None
+            if time.time() - updated > self.video_status_stale_seconds:
+                return None
+            return payload
         except Exception:
             return None
 
-        wanted_app = self.camera_app.lower()
-        wanted_stream = self.camera_stream.lower()
-        for application in root.findall(".//application"):
-            app_name = (application.findtext("name") or "").strip().lower()
-            if wanted_app and app_name != wanted_app:
-                continue
-            for stream in application.findall(".//stream"):
-                stream_name = (stream.findtext("name") or "").strip().lower()
-                if stream_name == wanted_stream:
-                    return True
-        return False
-
-    def _camera_active_from_ss(self) -> bool | None:
-        ss = shutil.which("ss")
-        if ss is None:
-            return None
-        try:
-            completed = subprocess.run(
-                [ss, "-Htn"],
-                check=True,
-                timeout=5,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-        except Exception:
-            return None
-        for line in completed.stdout.splitlines():
-            if ":1935" not in line:
-                continue
-            if "127.0.0.1" in line or "[::1]" in line:
-                continue
-            return True
-        return False
-
-    def _video_state(self) -> tuple[bool | None, bool, list[int]]:
-        process_tree = self._process_tree_pids(self.live_process)
-        live_process = bool(process_tree)
-
-        local_status = self._camera_active_from_local_pipeline(process_tree)
-        if local_status is not None:
-            return local_status, live_process, process_tree
-
-        status = self._camera_active_from_stat()
-        if status is not None:
-            return status, live_process, process_tree
-
-        return self._camera_active_from_ss(), live_process, process_tree
-
-    def _camera_active(self, live_process: bool | None = None) -> bool | None:
-        camera, _, _ = self._video_state()
-        return camera
-
-    def _live_process_active(self) -> bool:
-        return bool(self._process_tree_pids(self.live_process))
-
-    def _log_video_transition(
-        self,
-        camera: bool | None,
-        live_process: bool,
-        process_tree: list[int],
-    ) -> None:
-        if camera == self._last_video_state:
+    def _log_transition(self, name: str, value: bool) -> None:
+        if self._last_states.get(name) == value:
             return
-        self._last_video_state = camera
-
-        if camera is True:
-            LOG.info(
-                "Video signal active: BELABOX video pipeline has device open (process tree: %s)",
-                ",".join(str(pid) for pid in process_tree) or "none",
-            )
-        elif camera is False and live_process:
-            LOG.warning(
-                "Video signal missing: %s process tree is running but no active video device is open",
-                self.live_process,
-            )
-        elif camera is False:
-            LOG.info("Video signal inactive: encoder is stopped")
-        else:
-            LOG.info("Video signal state unknown")
+        self._last_states[name] = value
+        LOG.info("LED state %s=%s", name, "ON" if value else "OFF")
 
     def _probe(self) -> None:
-        online = self._relay_reachable()
-        bluetooth = self._bluetooth_sink_connected()
-        watchdog = self._watchdog_active()
-        camera, live_process, process_tree = self._video_state()
+        internet = self._internet_reachable()
+        bluetooth = self._bluetooth_connected()
+        video = self._video_status()
 
-        if online:
-            self._ever_online = True
-            self._set_pattern("green", ON)
-        else:
-            self._set_pattern("green", FAST if self._ever_online else SLOW)
+        video_input = bool(video and video.get("source_present") is True)
+        output = bool(
+            video
+            and video.get("encoder_running") is True
+            and video.get("pipeline_active") is True
+        )
 
-        if bluetooth:
-            self._set_pattern("blue", ON)
-        else:
-            self._set_pattern("blue", SLOW if watchdog else FAST)
+        self._set_pattern("green", ON if internet else OFF)
+        self._set_pattern("blue", ON if bluetooth else OFF)
+        self._set_pattern("yellow", ON if video_input else OFF)
+        self._set_pattern("red", ON if output else OFF)
 
-        self._log_video_transition(camera, live_process, process_tree)
-
-        if camera is True:
-            self._set_pattern("yellow", ON)
-        elif live_process:
-            self._set_pattern("yellow", FAST)
-        else:
-            self._set_pattern("yellow", OFF)
-
-        if live_process and camera is True:
-            self._set_pattern("red", ON)
-        elif live_process and camera is False:
-            self._set_pattern("red", FAST)
-        elif live_process:
-            self._set_pattern("red", SLOW)
-        else:
-            self._set_pattern("red", OFF)
+        self._log_transition("internet", internet)
+        self._log_transition("bluetooth", bluetooth)
+        self._log_transition("video_input", video_input)
+        self._log_transition("output", output)
 
     def _run(self) -> None:
         next_probe = 0.0
@@ -619,9 +411,10 @@ def main() -> int:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        return 0
+        pass
     finally:
         controller.stop()
+    return 0
 
 
 if __name__ == "__main__":
