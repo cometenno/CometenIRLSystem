@@ -41,6 +41,7 @@
   "remote_test_sound": "test.wav",
   "browser_audio_enabled": false,
   "browser_audio_url": "",
+  "browser_audio_sources": [],
   "browser_audio_sink_match": "WPS200",
   "browser_audio_browser": "auto",
   "browser_audio_profile_directory": "~/.cache/cometen-irl-browser-audio/chromium-profile",
