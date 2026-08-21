@@ -1,6 +1,6 @@
 # Watchdog and Heartbeat
 
-Cometen IRL Alerts uses two different health concepts that must not be confused:
+Cometen IRL System uses two different health concepts that must not be confused:
 
 1. **receiver heartbeat** - tells you whether the ROCK 5B+/receiver is alive
 2. **BELABOX ingest watchdog** - tells you whether the live video stream is actually reaching the BELABOX/SRT ingest and controls OBS fallback/recovery
@@ -249,6 +249,10 @@ When OBS falls back unexpectedly, check in this order:
 5. camera/USB input state
 6. network/SRT state
 7. receiver heartbeat only as supporting diagnostics
+
+## Compatibility note
+
+The `IRLAlertsController` filename and the `CometenIRL_*` global prefix are retained runtime identifiers. They do not need to be renamed when the repository/project branding changes to Cometen IRL System.
 
 ## Related documentation
 
