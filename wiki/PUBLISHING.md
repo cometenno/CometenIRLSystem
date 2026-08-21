@@ -5,10 +5,10 @@ The repository contains Wiki-ready source files in `wiki/`.
 GitHub stores the actual Wiki in a separate Git repository named:
 
 ```text
-CometenIRLAlerts.wiki.git
+CometenIRLSystem.wiki.git
 ```
 
-The main repository currently needs the Wiki feature enabled and initialized before these pages can be pushed there.
+The main repository Wiki feature must be enabled and the Wiki must be initialized before these pages can be pushed there.
 
 ## 1. Enable Wiki
 
@@ -26,13 +26,29 @@ Open the new **Wiki** tab and create the first Home page. The content can be tem
 
 This creates the separate `.wiki.git` repository.
 
-## 3. Publish from a machine with GitHub credentials
+## 3. Publish with the included script
 
-From a temporary directory:
+From the main repository on a Windows machine with GitHub credentials:
+
+```powershell
+.\scripts\publish-wiki.ps1
+```
+
+The script clones:
+
+```text
+https://github.com/la1ona/CometenIRLSystem.wiki.git
+```
+
+and copies all Markdown pages from `wiki/` before committing and pushing them.
+
+## Manual publishing
+
+You can also publish manually:
 
 ```bash
-git clone https://github.com/la1ona/CometenIRLAlerts.wiki.git
-cd CometenIRLAlerts.wiki
+git clone https://github.com/la1ona/CometenIRLSystem.wiki.git
+cd CometenIRLSystem.wiki
 ```
 
 Copy all Markdown files from the main repository's `wiki/` directory into the cloned Wiki repository, preserving names such as:
@@ -51,7 +67,7 @@ Then:
 
 ```bash
 git add .
-git commit -m "Publish Cometen IRL Alerts English wiki"
+git commit -m "Publish Cometen IRL System English wiki"
 git push
 ```
 
