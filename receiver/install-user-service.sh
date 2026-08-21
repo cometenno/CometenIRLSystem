@@ -11,24 +11,24 @@ HEARTBEAT_SERVICE="cometen-irl-heartbeat.service"
 HEARTBEAT_TEMPLATE="${SCRIPT_DIR}/cometen-irl-heartbeat-user.service"
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 ble ikke funnet."
+  echo "python3 was not found."
   exit 1
 fi
 
 if ! command -v systemctl >/dev/null 2>&1; then
-  echo "systemctl ble ikke funnet."
+  echo "systemctl was not found."
   exit 1
 fi
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
-  echo "Mangler ${CONFIG_PATH}"
-  echo "Kopier config.example.json til config.json og fyll inn oppsettet først."
+  echo "Missing ${CONFIG_PATH}"
+  echo "Copy config.example.json to config.json and configure it first."
   exit 1
 fi
 
 for template in "${ALERT_TEMPLATE}" "${HEARTBEAT_TEMPLATE}"; do
   if [[ ! -f "${template}" ]]; then
-    echo "Mangler service-malen ${template}"
+    echo "Missing service template ${template}"
     exit 1
   fi
 done
@@ -50,15 +50,15 @@ systemctl --user enable --now "${ALERT_SERVICE}"
 systemctl --user enable --now "${HEARTBEAT_SERVICE}"
 
 echo
-echo "Cometen IRL Alerts er installert som brukertjenester."
+echo "Cometen IRL System receiver services are installed."
 echo
 echo "Alert receiver:"
 echo "  Status: systemctl --user status ${ALERT_SERVICE}"
-echo "  Logg:   journalctl --user -u ${ALERT_SERVICE} -f"
+echo "  Log:    journalctl --user -u ${ALERT_SERVICE} -f"
 echo
 echo "Heartbeat:"
 echo "  Status: systemctl --user status ${HEARTBEAT_SERVICE}"
-echo "  Logg:   journalctl --user -u ${HEARTBEAT_SERVICE} -f"
+echo "  Log:    journalctl --user -u ${HEARTBEAT_SERVICE} -f"
 echo
-echo "For oppstart uten innlogging, kjør én gang:"
+echo "For startup without an interactive login, run once:"
 echo "sudo loginctl enable-linger ${USER}"
