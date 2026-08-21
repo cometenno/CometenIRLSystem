@@ -1,6 +1,6 @@
-# Cometen IRL Alerts
+# Cometen IRL System
 
-Cometen IRL Alerts is the central IRL control and return-channel project used with the Cometen BELABOX setup.
+Cometen IRL System is the central IRL control, monitoring and return-channel project used with the Cometen BELABOX setup.
 
 It combines:
 
@@ -17,6 +17,12 @@ It combines:
 - IRL stream start/BRB/end/admin commands
 - optional Channel Point mode switching
 - Twitch URL safety for URL-bearing commands
+
+Repository:
+
+```text
+https://github.com/la1ona/CometenIRLSystem
+```
 
 ## Architecture
 
@@ -180,9 +186,29 @@ The real BELABOX/streaming setup has production-tested or directly exercised:
 
 Independent audio playback from each newly added third-party Browser Source should still be validated provider by provider.
 
-## Update BELABOX
+## Fresh installation path
 
-Typical receiver update:
+A new clone uses the new repository/directory name:
+
+```bash
+cd ~
+git clone https://github.com/la1ona/CometenIRLSystem.git
+cd CometenIRLSystem
+```
+
+## Existing installations after the repository rename
+
+Existing BELABOX installations may still be located at:
+
+```text
+~/CometenIRLAlerts
+```
+
+That local directory name does not need to be changed immediately. GitHub redirects the renamed repository, and keeping the existing directory avoids breaking installed systemd service paths.
+
+For an existing installation, continue using its current local directory until a deliberate local-path migration is performed.
+
+Typical update on the current BELABOX installation therefore remains:
 
 ```bash
 cd ~/CometenIRLAlerts
@@ -193,6 +219,8 @@ systemctl --user restart cometen-irl-alerts.service
 systemctl --user restart cometen-irl-heartbeat.service
 ```
 
+For a fresh installation cloned after the rename, use `~/CometenIRLSystem` instead.
+
 If Browser Audio changed:
 
 ```bash
@@ -200,6 +228,20 @@ systemctl --user restart cometen-irl-browser-audio.service
 ```
 
 Relay PHP files are hosted separately and must be uploaded to the web host when they change; a BELABOX `git pull` does not update the web host.
+
+## Compatibility names intentionally retained
+
+The repository/project branding is now **Cometen IRL System**, but existing runtime identifiers are intentionally retained for compatibility unless a separate migration is performed. This includes names such as:
+
+```text
+CometenIRL_*
+cometen-irl-alerts.service
+CometenIRL_Send.cs
+CometenIRL_RemoteControl.cs
+CometenIRL_AdminControl.cs
+```
+
+Changing these identifiers is not required for the repository rename and could break existing Streamer.bot actions, globals or installed services.
 
 ## Security
 
