@@ -192,6 +192,7 @@ def build_browser_command(
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
+        "--disable-dev-shm-usage",
         "--autoplay-policy=no-user-gesture-required",
         f"--user-data-dir={profile_dir}",
         f"--window-size={width},{height}",
@@ -223,11 +224,18 @@ def terminate_process(process: subprocess.Popen[bytes], timeout: float = 8.0) ->
     if process.poll() is not None:
         return
 
-    process.terminate()
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         process.wait(timeout=3)
 
 
@@ -277,6 +285,7 @@ def run_browser(
         stdout=subprocess.DEVNULL,
         stderr=None,
         env=env,
+        start_new_session=True,
     )
 
     check_seconds = max(
