@@ -2,7 +2,7 @@
 
 Full maintained reference:
 
-https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/COMMANDS.md
+https://github.com/la1ona/CometenIRLSystem/blob/main/docs/COMMANDS.md
 
 ## Status / speaker
 
