@@ -9,7 +9,7 @@ CONFIG_PATH="${SCRIPT_DIR}/config.json"
 
 missing=()
 
-for command in python3 systemctl pw-cli wpctl xvfb-run; do
+for command in python3 systemctl pw-cli wpctl xvfb-run xauth; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     missing+=("${command}")
   fi
@@ -65,7 +65,7 @@ if ((${#missing[@]} > 0)); then
   echo
   echo "På Debian/Ubuntu/BELABOX-image med apt er typisk kommando:"
   echo "  sudo apt update"
-  echo "  sudo apt install -y xvfb chromium"
+  echo "  sudo apt install -y xvfb xauth chromium"
   echo
   echo "Installer bare manglende pakker. Ikke kjør full systemoppgradering."
   exit 1
