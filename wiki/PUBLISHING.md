@@ -1,57 +1,72 @@
 # Publishing the GitHub Wiki
 
-The repository contains Wiki-ready source files in `wiki/`.
+The repository contains the maintained Wiki source in `wiki/`.
 
-GitHub stores the actual Wiki in a separate Git repository named:
+GitHub stores the rendered Wiki in a separate Git repository:
 
 ```text
 CometenIRLSystem.wiki.git
 ```
 
-The main repository Wiki feature must be enabled and the Wiki must be initialized before these pages can be pushed there.
+The Wiki feature is enabled and the Wiki has been initialized.
 
-## 1. Enable Wiki
+## Automatic publishing
 
-On GitHub:
+The main repository now includes:
 
 ```text
-Repository -> Settings -> General -> Features -> Wikis
+.github/workflows/publish-wiki.yml
 ```
 
-Enable **Wikis**.
+Any push to `main` that changes `wiki/**` automatically synchronizes the Markdown files into the GitHub Wiki repository.
 
-## 2. Initialize the Wiki once
+The workflow:
 
-Open the new **Wiki** tab and create the first Home page. The content can be temporary; the files from `wiki/` will replace it.
+1. checks out the main repository
+2. clones `CometenIRLSystem.wiki.git`
+3. replaces the Wiki Markdown files with the maintained files from `wiki/`
+4. commits only when something changed
+5. pushes the synchronized Wiki
 
-This creates the separate `.wiki.git` repository.
+The workflow can also be started manually with GitHub Actions `workflow_dispatch`.
 
-## 3. Publish with the included script
+## Source of truth
 
-From the main repository on a Windows machine with GitHub credentials:
+The detailed technical documentation under `docs/` remains the canonical reference for implementation and setup details.
+
+The `wiki/` directory is the maintained navigation/front-door layer for GitHub Wiki. When behavior changes:
+
+1. update the relevant canonical `docs/` page
+2. update the matching Wiki page when needed
+3. commit the changes to `main`
+4. the Wiki publish workflow performs the Wiki sync automatically
+
+## Local fallback publisher
+
+A Windows/PowerShell fallback is retained:
 
 ```powershell
 .\scripts\publish-wiki.ps1
 ```
 
-The script clones:
+It clones:
 
 ```text
 https://github.com/la1ona/CometenIRLSystem.wiki.git
 ```
 
-and copies all Markdown pages from `wiki/` before committing and pushing them.
+copies all Markdown files from `wiki/`, commits any changes and pushes them.
 
-## Manual publishing
+## Manual fallback
 
-You can also publish manually:
+If automatic publishing is unavailable, the Wiki can still be updated manually:
 
 ```bash
 git clone https://github.com/la1ona/CometenIRLSystem.wiki.git
 cd CometenIRLSystem.wiki
 ```
 
-Copy all Markdown files from the main repository's `wiki/` directory into the cloned Wiki repository, preserving names such as:
+Copy the Markdown files from the main repository `wiki/` directory, preserving names such as:
 
 ```text
 Home.md
@@ -66,19 +81,11 @@ Troubleshooting.md
 Then:
 
 ```bash
-git add .
-git commit -m "Publish Cometen IRL System English wiki"
+git add -A
+git commit -m "Sync Cometen IRL System Wiki"
 git push
 ```
 
-## Keeping it in sync
+## Security
 
-The canonical detailed documentation remains under `docs/` in the main repository. The Wiki is intended as an easier navigation/front-door layer.
-
-When module behavior changes:
-
-1. update the canonical `docs/` page first
-2. update the matching Wiki summary if needed
-3. publish the Wiki changes
-
-Do not put private configuration, tokens, Browser Source URLs or BELABOX stream IDs in Wiki pages.
+Never put private configuration, sender/receiver tokens, database passwords, BELABOX stream IDs or private Browser Source URLs in Wiki pages.
