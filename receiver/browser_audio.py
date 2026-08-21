@@ -12,12 +12,13 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 LOG = logging.getLogger("cometen-irl-browser-audio")
-
 STOP_REQUESTED = False
+SOURCE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 def request_stop(signum: int, frame: object) -> None:
@@ -29,13 +30,10 @@ def request_stop(signum: int, frame: object) -> None:
 def load_config(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"Missing configuration file: {path}")
-
     with path.open("r", encoding="utf-8") as handle:
         config = json.load(handle)
-
     if not isinstance(config, dict):
         raise ValueError("config.json must contain a JSON object")
-
     return config
 
 
@@ -43,9 +41,63 @@ def expand_path(value: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
 
 
+def normalize_source_name(value: str) -> str:
+    name = (value or "").strip().lower()
+    if not SOURCE_NAME_RE.fullmatch(name):
+        raise ValueError(
+            "Browser Audio source name must match "
+            "[a-z0-9][a-z0-9_-]{0,31}"
+        )
+    return name
+
+
+def configured_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = config.get("browser_audio_sources")
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                name = normalize_source_name(str(item.get("name", "")))
+            except ValueError:
+                LOG.warning("Browser Audio: ignored source with invalid name")
+                continue
+            if name in seen:
+                LOG.warning("Browser Audio: ignored duplicate source '%s'", name)
+                continue
+            url = str(item.get("url", "")).strip()
+            if not url.startswith(("https://", "http://")):
+                LOG.warning("Browser Audio: ignored source '%s' with invalid URL", name)
+                continue
+            result.append(
+                {
+                    "name": name,
+                    "url": url,
+                    "enabled": bool(item.get("enabled", True)),
+                    "generation": int(item.get("generation", 0) or 0),
+                }
+            )
+            seen.add(name)
+        return result
+
+    legacy_url = str(config.get("browser_audio_url", "")).strip()
+    if legacy_url.startswith(("https://", "http://")):
+        return [
+            {
+                "name": "soundalerts",
+                "url": legacy_url,
+                "enabled": True,
+                "generation": 0,
+            }
+        ]
+    return []
+
+
 def resolve_browser(config: dict[str, Any]) -> str:
     configured = str(config.get("browser_audio_browser", "auto")).strip()
-
     if configured and configured.lower() != "auto":
         expanded = os.path.expandvars(os.path.expanduser(configured))
         if os.path.sep in expanded:
@@ -68,8 +120,8 @@ def resolve_browser(config: dict[str, Any]) -> str:
             return executable
 
     raise RuntimeError(
-        "No Chromium/Chrome browser found. Install 'chromium' or configure "
-        "browser_audio_browser explicitly."
+        "No Chromium/Chrome browser found. Run install-browser-runtime.sh "
+        "or configure browser_audio_browser explicitly."
     )
 
 
@@ -103,7 +155,6 @@ def resolve_audio_sink(match_text: str) -> str | None:
         completed.stdout,
         flags=re.MULTILINE,
     )
-
     for block in blocks:
         if 'media.class = "Audio/Sink"' not in block:
             continue
@@ -112,7 +163,6 @@ def resolve_audio_sink(match_text: str) -> str | None:
         match = re.search(r"^\s*id\s+(\d+),", block, flags=re.MULTILINE)
         if match:
             return match.group(1)
-
     return None
 
 
@@ -120,7 +170,6 @@ def set_default_sink(sink_id: str) -> None:
     executable = shutil.which("wpctl")
     if executable is None:
         raise RuntimeError("wpctl was not found; cannot set PipeWire default sink")
-
     subprocess.run(
         [executable, "set-default", sink_id],
         check=True,
@@ -132,46 +181,16 @@ def set_default_sink(sink_id: str) -> None:
     )
 
 
-def wait_for_sink(match_text: str, timeout_seconds: float) -> str:
-    started = time.monotonic()
-    next_log = 0.0
-
-    while not STOP_REQUESTED:
-        try:
-            sink_id = resolve_audio_sink(match_text)
-        except subprocess.CalledProcessError as error:
-            details = (error.stderr or "").strip()
-            LOG.warning("PipeWire sink lookup failed: %s", details or error)
-            sink_id = None
-
-        if sink_id:
-            set_default_sink(sink_id)
-            LOG.info(
-                "Browser Audio: resolved %s as PipeWire node %s and set it as default",
-                match_text,
-                sink_id,
+def profile_directory(config: dict[str, Any], source_name: str) -> Path:
+    base = expand_path(
+        str(
+            config.get(
+                "browser_audio_profile_directory",
+                "~/.cache/cometen-irl-browser-audio/chromium-profile",
             )
-            return sink_id
-
-        elapsed = time.monotonic() - started
-        if elapsed >= timeout_seconds:
-            raise RuntimeError(
-                f"Audio sink matching '{match_text}' was not found within "
-                f"{timeout_seconds:.0f} seconds"
-            )
-
-        if elapsed >= next_log:
-            LOG.info(
-                "Browser Audio: waiting for audio sink '%s' (%.0fs/%.0fs)",
-                match_text,
-                elapsed,
-                timeout_seconds,
-            )
-            next_log = elapsed + 10.0
-
-        time.sleep(1.0)
-
-    raise RuntimeError("Stop requested while waiting for audio sink")
+        )
+    )
+    return (base / source_name).resolve()
 
 
 def build_browser_command(
@@ -198,6 +217,9 @@ def build_browser_command(
         f"--window-size={width},{height}",
     ]
 
+    if os.geteuid() == 0:
+        browser_args.append("--no-sandbox")
+
     if bool(config.get("browser_audio_disable_gpu", True)):
         browser_args.append("--disable-gpu")
 
@@ -208,7 +230,6 @@ def build_browser_command(
         browser_args.extend(str(item) for item in extra if str(item).strip())
 
     browser_args.append(f"--app={url}")
-
     server_args = f"-screen 0 {width}x{height}x24 -nolisten tcp -ac"
 
     return [
@@ -223,12 +244,10 @@ def build_browser_command(
 def terminate_process(process: subprocess.Popen[bytes], timeout: float = 8.0) -> None:
     if process.poll() is not None:
         return
-
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         return
-
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -239,46 +258,64 @@ def terminate_process(process: subprocess.Popen[bytes], timeout: float = 8.0) ->
         process.wait(timeout=3)
 
 
-def run_browser(
+@dataclass
+class SourceRuntime:
+    name: str
+    fingerprint: str
+    process: subprocess.Popen[bytes]
+
+
+def source_fingerprint(config: dict[str, Any], source: dict[str, Any]) -> str:
+    material = {
+        "name": source["name"],
+        "url": source["url"],
+        "enabled": bool(source["enabled"]),
+        "generation": int(source.get("generation", 0)),
+        "browser": str(config.get("browser_audio_browser", "auto")),
+        "profile": str(config.get("browser_audio_profile_directory", "")),
+        "width": int(config.get("browser_audio_width", 1280)),
+        "height": int(config.get("browser_audio_height", 720)),
+        "disable_gpu": bool(config.get("browser_audio_disable_gpu", True)),
+        "extra_args": config.get("browser_audio_extra_args", []),
+    }
+    return json.dumps(material, sort_keys=True, ensure_ascii=False)
+
+
+def start_source(
     config: dict[str, Any],
-    url: str,
-    sink_match: str,
-    initial_sink: str,
-) -> int:
+    source: dict[str, Any],
+    sink_id: str,
+) -> SourceRuntime:
+    name = str(source["name"])
     browser = resolve_browser(config)
     xvfb_run = resolve_xvfb_run()
-
-    profile_dir = expand_path(
-        str(
-            config.get(
-                "browser_audio_profile_directory",
-                "~/.cache/cometen-irl-browser-audio/chromium-profile",
-            )
-        )
-    )
+    profile_dir = profile_directory(config, name)
     profile_dir.mkdir(parents=True, exist_ok=True)
     try:
         profile_dir.chmod(0o700)
     except OSError:
         pass
 
+    set_default_sink(sink_id)
     command = build_browser_command(
         config=config,
         browser=browser,
         xvfb_run=xvfb_run,
-        url=url,
+        url=str(source["url"]),
         profile_dir=profile_dir,
     )
-
-    env = os.environ.copy()
-    env.setdefault("PULSE_PROP", "application.name=Cometen IRL Browser Audio")
-
     safe_command = [
         "--app=<browser-source-url>" if str(part).startswith("--app=") else part
         for part in command
     ]
-    LOG.info("Browser Audio: starting %s", " ".join(shlex.quote(x) for x in safe_command))
+    LOG.info(
+        "Browser Audio [%s]: starting %s",
+        name,
+        " ".join(shlex.quote(x) for x in safe_command),
+    )
 
+    env = os.environ.copy()
+    env["PULSE_PROP"] = f"application.name=Cometen IRL Browser Audio {name}"
     process = subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
@@ -287,58 +324,26 @@ def run_browser(
         env=env,
         start_new_session=True,
     )
-
-    check_seconds = max(
-        2.0, float(config.get("browser_audio_sink_check_seconds", 5))
+    return SourceRuntime(
+        name=name,
+        fingerprint=source_fingerprint(config, source),
+        process=process,
     )
-    current_sink = initial_sink
-    sink_missing_logged = False
 
-    while not STOP_REQUESTED:
-        exit_code = process.poll()
-        if exit_code is not None:
-            LOG.warning("Browser Audio: browser stopped with exit code %s", exit_code)
-            return int(exit_code)
 
-        time.sleep(check_seconds)
+def stop_runtime(runtime: SourceRuntime, reason: str) -> None:
+    LOG.info("Browser Audio [%s]: stopping (%s)", runtime.name, reason)
+    terminate_process(runtime.process)
 
-        try:
-            sink_id = resolve_audio_sink(sink_match)
-        except Exception as error:
-            LOG.warning("Browser Audio: sink check failed: %s", error)
-            continue
 
-        if not sink_id:
-            if not sink_missing_logged:
-                LOG.warning(
-                    "Browser Audio: audio sink '%s' disappeared; waiting for reconnect",
-                    sink_match,
-                )
-                sink_missing_logged = True
-            continue
-
-        sink_missing_logged = False
-
-        if sink_id != current_sink:
-            LOG.info(
-                "Browser Audio: %s reappeared as node %s (was %s); restarting browser "
-                "to rebind audio",
-                sink_match,
-                sink_id,
-                current_sink,
-            )
-            set_default_sink(sink_id)
-            terminate_process(process)
-            return 75
-
-        try:
-            set_default_sink(sink_id)
-        except Exception as error:
-            LOG.warning("Browser Audio: could not refresh default sink: %s", error)
-
-    LOG.info("Browser Audio: stop requested")
-    terminate_process(process)
-    return 0
+def desired_map(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    if not bool(config.get("browser_audio_enabled", False)):
+        return {}
+    return {
+        str(source["name"]): source
+        for source in configured_sources(config)
+        if bool(source.get("enabled", True))
+    }
 
 
 def main() -> int:
@@ -351,67 +356,156 @@ def main() -> int:
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
-    config = load_config(config_path)
+    runtimes: dict[str, SourceRuntime] = {}
+    restart_after: dict[str, float] = {}
+    current_sink: str | None = None
+    sink_missing_logged = False
+    last_state_signature = ""
+    check_seconds = 2.0
 
-    if not bool(config.get("browser_audio_enabled", False)):
-        LOG.error(
-            "Browser Audio is disabled. Set browser_audio_enabled=true in %s",
-            config_path,
-        )
-        return 2
+    LOG.info("Cometen IRL Browser Audio supervisor starting")
 
-    url = str(config.get("browser_audio_url", "")).strip()
-    if not url.startswith(("https://", "http://")):
-        LOG.error(
-            "browser_audio_url is missing or invalid in %s. "
-            "Use the Sound Alerts Browser Source URL.",
-            config_path,
-        )
-        return 2
+    try:
+        while not STOP_REQUESTED:
+            try:
+                config = load_config(config_path)
+                desired = desired_map(config)
+                sink_match = (
+                    str(
+                        config.get(
+                            "browser_audio_sink_match",
+                            config.get("remote_audio_sink_match", "WPS200"),
+                        )
+                    ).strip()
+                    or "WPS200"
+                )
+                check_seconds = max(
+                    2.0, float(config.get("browser_audio_sink_check_seconds", 5))
+                )
+            except Exception as error:
+                LOG.exception("Browser Audio: could not load runtime config: %s", error)
+                time.sleep(5.0)
+                continue
 
-    sink_match = (
-        str(
-            config.get(
-                "browser_audio_sink_match",
-                config.get("remote_audio_sink_match", "WPS200"),
+            state_signature = json.dumps(
+                {
+                    "master": bool(config.get("browser_audio_enabled", False)),
+                    "sources": [
+                        {
+                            "name": s["name"],
+                            "enabled": s["enabled"],
+                            "generation": s.get("generation", 0),
+                        }
+                        for s in configured_sources(config)
+                    ],
+                    "sink": sink_match,
+                },
+                sort_keys=True,
             )
-        ).strip()
-        or "WPS200"
-    )
-    wait_seconds = max(
-        10.0, float(config.get("browser_audio_sink_wait_seconds", 120))
-    )
+            if state_signature != last_state_signature:
+                LOG.info(
+                    "Browser Audio: config changed; master=%s enabled_sources=%s sink=%s",
+                    "on" if bool(config.get("browser_audio_enabled", False)) else "off",
+                    ",".join(desired.keys()) or "<none>",
+                    sink_match,
+                )
+                last_state_signature = state_signature
 
-    LOG.info(
-        "Cometen IRL Browser Audio starting: sink=%s source=%s",
-        sink_match,
-        "<configured browser source>",
-    )
+            for name, runtime in list(runtimes.items()):
+                source = desired.get(name)
+                if source is None:
+                    stop_runtime(runtime, "disabled/removed")
+                    runtimes.pop(name, None)
+                    restart_after.pop(name, None)
+                    continue
+                wanted_fingerprint = source_fingerprint(config, source)
+                if wanted_fingerprint != runtime.fingerprint:
+                    stop_runtime(runtime, "configuration changed")
+                    runtimes.pop(name, None)
+                    restart_after[name] = 0.0
 
-    while not STOP_REQUESTED:
-        try:
-            sink_id = wait_for_sink(sink_match, wait_seconds)
-            exit_code = run_browser(config, url, sink_match, sink_id)
-        except Exception as error:
-            if STOP_REQUESTED:
-                break
-            LOG.exception("Browser Audio failed: %s", error)
-            time.sleep(5.0)
-            continue
+            if not desired:
+                current_sink = None
+                sink_missing_logged = False
+                time.sleep(check_seconds)
+                continue
 
-        if STOP_REQUESTED:
-            break
+            try:
+                sink_id = resolve_audio_sink(sink_match)
+            except Exception as error:
+                LOG.warning("Browser Audio: sink check failed: %s", error)
+                sink_id = None
 
-        if exit_code == 75:
-            time.sleep(1.0)
-        else:
-            LOG.warning(
-                "Browser Audio: restarting browser in 5 seconds after exit code %s",
-                exit_code,
-            )
-            time.sleep(5.0)
+            if not sink_id:
+                if not sink_missing_logged:
+                    LOG.warning(
+                        "Browser Audio: audio sink '%s' is unavailable; waiting",
+                        sink_match,
+                    )
+                    sink_missing_logged = True
+                time.sleep(check_seconds)
+                continue
 
-    LOG.info("Cometen IRL Browser Audio stopped")
+            sink_missing_logged = False
+            if current_sink is None:
+                current_sink = sink_id
+                set_default_sink(sink_id)
+                LOG.info(
+                    "Browser Audio: resolved %s as PipeWire node %s and set it as default",
+                    sink_match,
+                    sink_id,
+                )
+            elif sink_id != current_sink:
+                LOG.info(
+                    "Browser Audio: %s reappeared as node %s (was %s); "
+                    "restarting sources to rebind audio",
+                    sink_match,
+                    sink_id,
+                    current_sink,
+                )
+                current_sink = sink_id
+                set_default_sink(sink_id)
+                for name, runtime in list(runtimes.items()):
+                    stop_runtime(runtime, "audio sink changed")
+                    runtimes.pop(name, None)
+                    restart_after[name] = 0.0
+            else:
+                try:
+                    set_default_sink(sink_id)
+                except Exception as error:
+                    LOG.warning("Browser Audio: could not refresh default sink: %s", error)
+
+            for name, runtime in list(runtimes.items()):
+                exit_code = runtime.process.poll()
+                if exit_code is None:
+                    continue
+                LOG.warning(
+                    "Browser Audio [%s]: browser stopped with exit code %s",
+                    name,
+                    exit_code,
+                )
+                runtimes.pop(name, None)
+                restart_after[name] = time.monotonic() + 5.0
+
+            now = time.monotonic()
+            for name, source in desired.items():
+                if name in runtimes:
+                    continue
+                if now < restart_after.get(name, 0.0):
+                    continue
+                try:
+                    runtimes[name] = start_source(config, source, current_sink)
+                    restart_after.pop(name, None)
+                except Exception as error:
+                    LOG.exception("Browser Audio [%s] failed to start: %s", name, error)
+                    restart_after[name] = time.monotonic() + 5.0
+
+            time.sleep(check_seconds)
+    finally:
+        for runtime in list(runtimes.values()):
+            stop_runtime(runtime, "service stopping")
+        LOG.info("Cometen IRL Browser Audio supervisor stopped")
+
     return 0
 
 
