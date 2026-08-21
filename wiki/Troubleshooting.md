@@ -61,4 +61,4 @@ journalctl -b -1 -n 100 --no-pager
 
 For detailed guides, start at:
 
-https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/README.md
+https://github.com/la1ona/CometenIRLSystem/blob/main/docs/README.md
