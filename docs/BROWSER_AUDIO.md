@@ -42,6 +42,10 @@ receiver/config.json
 
 This file is gitignored.
 
+## Repository path
+
+Fresh installations use `~/CometenIRLSystem`. Existing installations created before the repository rename may still use `~/CometenIRLAlerts`; keep the existing path unless you deliberately migrate and reinstall services that contain absolute paths.
+
 ## First-time runtime installation on Jammy ARM64
 
 Install dependencies:
@@ -50,12 +54,14 @@ Install dependencies:
 sudo apt install -y xvfb xauth python3-venv
 ```
 
-Install the local Playwright Chromium runtime:
+Install the local Playwright Chromium runtime on a fresh installation:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 bash install-browser-runtime.sh
 ```
+
+Use `~/CometenIRLAlerts/receiver` instead on an existing pre-rename checkout.
 
 The runtime is installed under the user's local data directory, normally:
 
