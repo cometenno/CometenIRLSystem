@@ -47,4 +47,5 @@ jobs:
           fi
 
           git commit -m "Sync Cometen IRL System Wiki"
-          git push origin HEAD:master
+          WIKI_BRANCH="$(git branch --show-current)"
+          git push origin "HEAD:${WIKI_BRANCH}"
