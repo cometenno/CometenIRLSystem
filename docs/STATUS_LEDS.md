@@ -40,7 +40,7 @@ LED anode/long leg goes toward GPIO through the resistor. Cathode/short leg/flat
 - slow blink - receiver is starting or relay host has not yet been reached
 - solid - relay host is reachable
 - fast blink - network/relay was lost after the system had been online
-- off - box or CometenIRLAlerts receiver service is off
+- off - box or `cometen-irl-alerts.service` receiver service is off
 
 ### Blue - BLUETOOTH / WPS200
 
@@ -158,9 +158,22 @@ green -> blue -> yellow -> red -> all
 
 Typical step time is 0.3 seconds.
 
+## Repository path
+
+Fresh installations use `~/CometenIRLSystem`. Existing pre-rename installations may still use `~/CometenIRLAlerts`; keep the existing path unless a deliberate service-path migration is performed.
+
 ## Install/update GPIO and video probe
 
-Run on BELABOX:
+Fresh post-rename checkout:
+
+```bash
+cd ~/CometenIRLSystem
+git pull
+cd receiver
+bash ./install-gpio-leds.sh
+```
+
+Existing pre-rename checkout:
 
 ```bash
 cd ~/CometenIRLAlerts
@@ -218,10 +231,14 @@ Adjust the sink match and camera path to the actual installation. Do not commit 
 
 ## Test only the LEDs
 
+From a fresh post-rename checkout:
+
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 python3 status_leds.py config.json --test
 ```
+
+Use `~/CometenIRLAlerts/receiver` instead on an existing pre-rename checkout.
 
 Expected:
 
@@ -242,6 +259,10 @@ Watch:
 cat /run/cometen-irl-video-status.json
 journalctl --user -u cometen-irl-alerts.service -f
 ```
+
+## Compatibility note
+
+The repository/project branding is Cometen IRL System. Existing service names such as `cometen-irl-alerts.service` are intentionally retained so deployed BELABOX installations continue to work.
 
 ## Related documentation
 
