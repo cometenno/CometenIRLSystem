@@ -6,6 +6,7 @@ CONFIG_PATH="${SCRIPT_DIR}/config.json"
 RUNTIME_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}/cometen-irl-browser-audio"
 VENV_DIR="${RUNTIME_ROOT}/venv"
 BROWSERS_DIR="${RUNTIME_ROOT}/ms-playwright"
+TMP_DIR="${RUNTIME_ROOT}/tmp"
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
   echo "Mangler ${CONFIG_PATH}"
@@ -23,8 +24,14 @@ if ! python3 -m venv --help >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "${RUNTIME_ROOT}" "${BROWSERS_DIR}"
-chmod 700 "${RUNTIME_ROOT}" || true
+mkdir -p "${RUNTIME_ROOT}" "${BROWSERS_DIR}" "${TMP_DIR}"
+chmod 700 "${RUNTIME_ROOT}" "${TMP_DIR}" || true
+
+# BELABOX-images can have a small tmpfs-backed /tmp even when / has hundreds of GB free.
+# Force Playwright/pip temporary downloads and extraction to the runtime directory on /home.
+export TMPDIR="${TMP_DIR}"
+export TMP="${TMP_DIR}"
+export TEMP="${TMP_DIR}"
 
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   python3 -m venv "${VENV_DIR}"
