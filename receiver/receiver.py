@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 LOG = logging.getLogger("cometen-irl-alerts")
+SOURCE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -36,6 +37,14 @@ def load_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def save_config(path: Path, config: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(config, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(temporary, path)
+
+
 def request_json(
     method: str,
     url: str,
@@ -47,7 +56,7 @@ def request_json(
     headers = {
         "Accept": "application/json",
         "X-Cometen-Token": token,
-        "User-Agent": "CometenIRLAlerts/0.4.2",
+        "User-Agent": "CometenIRLAlerts/0.6",
     }
 
     if payload is not None:
@@ -378,44 +387,246 @@ def current_wifi_status() -> str:
     return "WiFi offline"
 
 
-def handle_control(config: dict[str, Any], event: dict[str, Any], config_dir: Path) -> str:
+def normalize_browser_source_name(value: str) -> str:
+    name = (value or "").strip().lower()
+    if not SOURCE_NAME_RE.fullmatch(name):
+        raise ValueError("ugyldig kildenavn")
+    return name
+
+
+def ensure_browser_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = config.get("browser_audio_sources")
+    if isinstance(raw, list):
+        sources = [item for item in raw if isinstance(item, dict)]
+        config["browser_audio_sources"] = sources
+        return sources
+
+    sources: list[dict[str, Any]] = []
+    legacy_url = str(config.get("browser_audio_url", "")).strip()
+    if legacy_url.startswith(("https://", "http://")):
+        sources.append(
+            {
+                "name": "soundalerts",
+                "url": legacy_url,
+                "enabled": True,
+                "generation": 0,
+            }
+        )
+    config["browser_audio_sources"] = sources
+    return sources
+
+
+def find_browser_source(
+    sources: list[dict[str, Any]], name: str
+) -> dict[str, Any] | None:
+    for source in sources:
+        if str(source.get("name", "")).strip().lower() == name:
+            return source
+    return None
+
+
+def browser_audio_service_state() -> str:
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return "?"
+    try:
+        completed = subprocess.run(
+            [systemctl, "--user", "is-active", "cometen-irl-browser-audio.service"],
+            check=False,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        state = completed.stdout.strip()
+        return state or "?"
+    except Exception:
+        return "?"
+
+
+def browser_audio_status(config: dict[str, Any]) -> str:
+    sources = ensure_browser_sources(config)
+    master = "ON" if bool(config.get("browser_audio_enabled", False)) else "OFF"
+    service = browser_audio_service_state()
+    if not sources:
+        return f"IRL Audio: {master} | service {service} | ingen kilder"
+
+    entries = []
+    for source in sources[:8]:
+        name = str(source.get("name", "?"))
+        state = "ON" if bool(source.get("enabled", True)) else "OFF"
+        entries.append(f"{name} {state}")
+    return f"IRL Audio: {master} | service {service} | " + ", ".join(entries)
+
+
+def handle_browser_audio_control(
+    config: dict[str, Any],
+    action_text: str,
+    config_path: Path,
+) -> str:
+    # Browser Audio config may be changed by its local configurator while the
+    # long-running receiver is already active. Reload before every Browser Audio
+    # control so an old in-memory config can never overwrite newer URL/runtime
+    # settings when it writes config.json.
+    config = load_config(config_path)
+    parts = (action_text or "").strip().split(" ", 2)
+    action = parts[0].strip().lower() if parts else ""
+    arg1 = parts[1].strip() if len(parts) >= 2 else ""
+    arg2 = parts[2].strip() if len(parts) >= 3 else ""
+    sources = ensure_browser_sources(config)
+
+    if action == "browser_audio_status":
+        return browser_audio_status(config)
+
+    if action == "browser_audio_source_status":
+        name = normalize_browser_source_name(arg1)
+        source = find_browser_source(sources, name)
+        if source is None:
+            raise ValueError(f"fant ikke Browser Audio-kilden '{name}'")
+        source_state = "ON" if bool(source.get("enabled", True)) else "OFF"
+        master = "ON" if bool(config.get("browser_audio_enabled", False)) else "OFF"
+        service = browser_audio_service_state()
+        return f"IRL Audio: {name} {source_state} | master {master} | service {service}"
+
+    if action == "browser_audio_master_on":
+        if not sources:
+            raise RuntimeError("IRL Browser Audio har ingen kilder")
+        config["browser_audio_enabled"] = True
+        save_config(config_path, config)
+        return "IRL Audio: på"
+
+    if action == "browser_audio_master_off":
+        config["browser_audio_enabled"] = False
+        save_config(config_path, config)
+        return "IRL Audio: av"
+
+    if action == "browser_audio_restart":
+        if not sources:
+            raise RuntimeError("IRL Browser Audio har ingen kilder")
+        for source in sources:
+            source["generation"] = int(source.get("generation", 0) or 0) + 1
+        config["browser_audio_enabled"] = True
+        save_config(config_path, config)
+        return "IRL Audio: restart bestilt"
+
+    if action == "browser_audio_add":
+        name = normalize_browser_source_name(arg1)
+        url = arg2
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("Browser Source URL må starte med http:// eller https://")
+        if len(url) > 190:
+            raise ValueError("Browser Source URL er for lang for chat-relay (maks 190 tegn)")
+        source = find_browser_source(sources, name)
+        if source is None:
+            if len(sources) >= 8:
+                raise ValueError("maks 8 Browser Audio-kilder")
+            source = {"name": name, "url": url, "enabled": True, "generation": 0}
+            sources.append(source)
+        else:
+            source["url"] = url
+            source["enabled"] = True
+            source["generation"] = int(source.get("generation", 0) or 0) + 1
+        if name == "soundalerts":
+            config["browser_audio_url"] = url
+        config["browser_audio_enabled"] = True
+        save_config(config_path, config)
+        LOG.info("Remote control: Browser Audio source '%s' added/updated", name)
+        return f"IRL Audio: {name} lagt til"
+
+    if action in {
+        "browser_audio_source_on",
+        "browser_audio_source_off",
+        "browser_audio_source_restart",
+        "browser_audio_remove",
+    }:
+        name = normalize_browser_source_name(arg1)
+        source = find_browser_source(sources, name)
+        if source is None:
+            raise ValueError(f"fant ikke Browser Audio-kilden '{name}'")
+
+        if action == "browser_audio_source_on":
+            source["enabled"] = True
+            config["browser_audio_enabled"] = True
+            message = f"IRL Audio: {name} på"
+        elif action == "browser_audio_source_off":
+            source["enabled"] = False
+            message = f"IRL Audio: {name} av"
+        elif action == "browser_audio_source_restart":
+            source["generation"] = int(source.get("generation", 0) or 0) + 1
+            source["enabled"] = True
+            config["browser_audio_enabled"] = True
+            message = f"IRL Audio: {name} restart bestilt"
+        else:
+            sources[:] = [
+                item
+                for item in sources
+                if str(item.get("name", "")).strip().lower() != name
+            ]
+            if name == "soundalerts":
+                config["browser_audio_url"] = ""
+            message = f"IRL Audio: {name} slettet"
+
+        save_config(config_path, config)
+        LOG.info("Remote control: %s %s", action, name)
+        return message
+
+    raise ValueError(f"Unsupported Browser Audio action: {action or '<empty>'}")
+
+
+def handle_control(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    config_dir: Path,
+    config_path: Path,
+) -> str:
     if not bool(config.get("remote_control_enabled", True)):
         raise RuntimeError("IRL remote control is disabled in config")
 
-    action = str(event.get("message", "")).strip().lower()
+    action_text = str(event.get("message", "")).strip()
+    action = action_text.split(" ", 1)[0].strip().lower()
     value = int(event.get("amount", 0) or 0)
+
+    if action.startswith("browser_audio_"):
+        return handle_browser_audio_control(config, action_text, config_path)
+
     step = max(1, min(25, int(config.get("remote_volume_step_percent", 5))))
     max_volume = max(1, min(100, int(config.get("remote_volume_max_percent", 100))))
     match_text = str(config.get("remote_audio_sink_match", "WPS200")).strip() or "WPS200"
-    sink = resolve_audio_sink(config)
 
     if action == "volume_set":
+        sink = resolve_audio_sink(config)
         value = max(0, min(max_volume, value))
         run_wpctl("set-volume", sink, f"{value / 100.0:.2f}")
         LOG.info("Remote control: volume set to %s%%", value)
         return f"IRL: volum satt til {value}%"
 
     if action == "volume_up":
+        sink = resolve_audio_sink(config)
         run_wpctl("set-volume", sink, f"{step}%+")
         LOG.info("Remote control: volume increased by %s%%", step)
         return f"IRL: volum økt med {step}%"
 
     if action == "volume_down":
+        sink = resolve_audio_sink(config)
         run_wpctl("set-volume", sink, f"{step}%-")
         LOG.info("Remote control: volume decreased by %s%%", step)
         return f"IRL: volum senket med {step}%"
 
     if action == "mute":
+        sink = resolve_audio_sink(config)
         run_wpctl("set-mute", sink, "1")
         LOG.info("Remote control: muted")
         return f"IRL: {match_text} muted"
 
     if action == "unmute":
+        sink = resolve_audio_sink(config)
         run_wpctl("set-mute", sink, "0")
         LOG.info("Remote control: unmuted")
         return f"IRL: {match_text} unmuted"
 
     if action == "status":
+        sink = resolve_audio_sink(config)
         wifi = current_wifi_status()
         uptime = format_uptime()
         LOG.info(
@@ -431,6 +642,7 @@ def handle_control(config: dict[str, Any], event: dict[str, Any], config_dir: Pa
         )
 
     if action == "alert_test":
+        sink = resolve_audio_sink(config)
         test_event = {
             "id": str(event.get("id", "")),
             "type": "test",
@@ -533,7 +745,9 @@ def run(config_path: Path) -> None:
 
                     try:
                         if event_type == "control":
-                            control_result_message = handle_control(config, event, config_dir)
+                            control_result_message = handle_control(
+                                config, event, config_dir, config_path
+                            )
                             control_result_ok = True
                         else:
                             play_event(config, event, config_dir)
