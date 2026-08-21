@@ -1,6 +1,6 @@
 # Security
 
-Cometen IRL Alerts intentionally separates public code from private runtime configuration.
+Cometen IRL System intentionally separates public code from private runtime configuration.
 
 ## Never commit
 
