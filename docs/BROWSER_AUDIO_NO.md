@@ -71,6 +71,7 @@ Browser Audio trenger:
 
 - Chromium eller Chrome
 - Xvfb / `xvfb-run`
+- `xauth`
 - PipeWire `pw-cli`
 - `wpctl`
 
@@ -86,7 +87,7 @@ På Debian/Ubuntu-baserte image er typisk installasjon:
 
 ```bash
 sudo apt update
-sudo apt install -y xvfb chromium
+sudo apt install -y xvfb xauth chromium
 ```
 
 Installer bare manglende pakker. Ikke kjør full systemoppgradering bare for Browser Audio.
