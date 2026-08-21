@@ -124,11 +124,7 @@ def find_open_video_device(
 
 
 def hdmi_rx_signal_present(device: str = HDMI_RX_DEVICE) -> tuple[bool, str]:
-    """Return real HDMI-RX signal state using V4L2 DV timings.
-
-    ROCK 5B+ keeps /dev/hdmirx present even with no cable/feed. Therefore
-    device existence alone must not turn the yellow VIDEO LED on.
-    """
+    """Return real HDMI-RX signal state using V4L2 DV timings."""
     if not Path(device).exists():
         return False, "device-missing"
 
@@ -153,7 +149,6 @@ def hdmi_rx_signal_present(device: str = HDMI_RX_DEVICE) -> tuple[bool, str]:
     if completed.returncode != 0:
         return False, "no-lock"
 
-    # Require non-zero active timings as an extra guard against a false success.
     width = 0
     height = 0
     for line in output.splitlines():
@@ -186,8 +181,6 @@ def local_source_state(devices: dict[str, str]) -> tuple[bool, str, str]:
 
         return True, resolved, "device-present"
 
-    # If HDMI-RX exists but has no lock, expose the device path for diagnostics
-    # while correctly reporting source_present=false.
     if HDMI_RX_DEVICE in devices:
         present, detail = hdmi_rx_signal_present(HDMI_RX_DEVICE)
         return present, devices[HDMI_RX_DEVICE], detail
@@ -195,12 +188,44 @@ def local_source_state(devices: dict[str, str]) -> tuple[bool, str, str]:
     return False, "", "no-local-source"
 
 
-def rtmp_source_state(config: dict[str, Any]) -> tuple[bool | None, str, str]:
-    """Return RTMP publisher state from the local nginx-rtmp stat endpoint.
+def rtmp_socket_state() -> bool | None:
+    """Detect an external RTMP publisher connected to local TCP port 1935.
 
-    The Action camera/Mimo path publishes to /publish/live. nginx-rtmp only
-    lists the stream while a publisher is actually connected, so this gives us
-    a real source-presence signal without relying on a local /dev/video node.
+    The BELABOX RTMP input path also has a loopback connection from belacoder,
+    so loopback sockets are deliberately ignored. An external established
+    connection on port 1935 is the Action camera/Mimo publisher.
+    """
+    ss = shutil.which("ss")
+    if ss is None:
+        return None
+
+    try:
+        completed = subprocess.run(
+            [ss, "-Htn"],
+            check=True,
+            timeout=3,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return None
+
+    for line in completed.stdout.splitlines():
+        if ":1935" not in line:
+            continue
+        if "127.0.0.1" in line or "[::1]" in line:
+            continue
+        return True
+    return False
+
+
+def rtmp_source_state(config: dict[str, Any]) -> tuple[bool | None, str, str]:
+    """Return RTMP publisher state.
+
+    Prefer nginx-rtmp /stat when available. Some BELABOX builds do not expose
+    that endpoint, so fall back to an external established TCP/1935 publisher.
     """
     settings = config.get("status_leds", {})
     if not isinstance(settings, dict):
@@ -211,32 +236,37 @@ def rtmp_source_state(config: dict[str, Any]) -> tuple[bool | None, str, str]:
     stream_name = str(settings.get("camera_stream", "live")).strip() or "live"
     descriptor = f"rtmp:{app_name}/{stream_name}"
 
-    if not status_url:
-        return None, descriptor, "rtmp-stat-disabled"
+    if status_url:
+        try:
+            request = urllib.request.Request(
+                status_url,
+                headers={"User-Agent": "CometenIRLAlerts/video-probe"},
+            )
+            with urllib.request.urlopen(request, timeout=1.5) as response:
+                body = response.read()
+            root = ET.fromstring(body)
 
-    try:
-        request = urllib.request.Request(
-            status_url,
-            headers={"User-Agent": "CometenIRLAlerts/video-probe"},
-        )
-        with urllib.request.urlopen(request, timeout=1.5) as response:
-            body = response.read()
-        root = ET.fromstring(body)
-    except Exception:
-        return None, descriptor, "rtmp-stat-unavailable"
+            wanted_app = app_name.lower()
+            wanted_stream = stream_name.lower()
+            for application in root.findall(".//application"):
+                current_app = (application.findtext("name") or "").strip().lower()
+                if current_app != wanted_app:
+                    continue
+                for stream in application.findall(".//stream"):
+                    current_stream = (stream.findtext("name") or "").strip().lower()
+                    if current_stream == wanted_stream:
+                        return True, descriptor, f"rtmp-publisher:{app_name}/{stream_name}"
 
-    wanted_app = app_name.lower()
-    wanted_stream = stream_name.lower()
-    for application in root.findall(".//application"):
-        current_app = (application.findtext("name") or "").strip().lower()
-        if current_app != wanted_app:
-            continue
-        for stream in application.findall(".//stream"):
-            current_stream = (stream.findtext("name") or "").strip().lower()
-            if current_stream == wanted_stream:
-                return True, descriptor, f"rtmp-publisher:{app_name}/{stream_name}"
+            return False, descriptor, f"rtmp-missing:{app_name}/{stream_name}"
+        except Exception:
+            pass
 
-    return False, descriptor, f"rtmp-missing:{app_name}/{stream_name}"
+    socket_present = rtmp_socket_state()
+    if socket_present is True:
+        return True, descriptor, "rtmp-publisher:tcp/1935"
+    if socket_present is False:
+        return False, descriptor, "rtmp-missing:tcp/1935"
+    return None, descriptor, "rtmp-state-unknown"
 
 
 def pipeline_source_kind() -> str:
@@ -286,8 +316,6 @@ def run(config_path: Path) -> None:
         pipeline_active = local_pipeline_active
 
         if encoder_running and mode == "rtmp":
-            # RTMP pipelines do not hold a /dev/video node open. Validate the
-            # publisher instead and combine it with the running encoder state.
             source_present = rtmp_present is True
             source_detail = rtmp_detail
             source_device = rtmp_device
@@ -295,14 +323,11 @@ def run(config_path: Path) -> None:
             pipeline_device = rtmp_device if pipeline_active else ""
             owner_pid = roots[0] if pipeline_active else None
         elif encoder_running and mode == "local":
-            # Keep the proven V4L2/HDMI logic for USB and HDMI capture inputs.
             source_present = local_present
             source_detail = local_detail
             source_device = local_device
             pipeline_active = local_pipeline_active
         elif encoder_running:
-            # Unknown pipeline format: prefer a confirmed local device handle,
-            # otherwise accept a confirmed RTMP publisher as the active source.
             if local_pipeline_active:
                 source_present = local_present
                 source_detail = local_detail
@@ -318,7 +343,6 @@ def run(config_path: Path) -> None:
             else:
                 pipeline_active = False
         else:
-            # Encoder stopped: yellow LED means any real camera source is ready.
             if rtmp_present is True:
                 source_present = True
                 source_detail = rtmp_detail
@@ -339,14 +363,11 @@ def run(config_path: Path) -> None:
             pipeline_device = ""
             owner_pid = None
 
-        # Yellow LED semantics:
-        # - Encoder stopped: show whether a REAL source is available.
-        # - Encoder running: require the selected BELABOX input pipeline to be active.
         video_active = pipeline_active if encoder_running else source_present
 
         write_status(
             {
-                "version": 4,
+                "version": 5,
                 "updated_unix": time.time(),
                 "encoder_running": encoder_running,
                 "source_present": source_present,
@@ -372,7 +393,7 @@ def main() -> int:
         try:
             write_status(
                 {
-                    "version": 4,
+                    "version": 5,
                     "updated_unix": time.time(),
                     "encoder_running": False,
                     "source_present": False,
