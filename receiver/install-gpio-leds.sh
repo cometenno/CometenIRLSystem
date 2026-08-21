@@ -9,21 +9,21 @@ VIDEO_SERVICE="cometen-irl-video-probe.service"
 VIDEO_SERVICE_PATH="/etc/systemd/system/${VIDEO_SERVICE}"
 
 if ! id "${TARGET_USER}" >/dev/null 2>&1; then
-  echo "Fant ikke bruker: ${TARGET_USER}"
+  echo "User not found: ${TARGET_USER}"
   exit 1
 fi
 
 if [[ ! -f "${VIDEO_TEMPLATE}" ]]; then
-  echo "Mangler service-malen ${VIDEO_TEMPLATE}"
+  echo "Missing service template ${VIDEO_TEMPLATE}"
   exit 1
 fi
 
 if [[ ! -f "${SCRIPT_DIR}/video_signal_probe.py" ]]; then
-  echo "Mangler ${SCRIPT_DIR}/video_signal_probe.py"
+  echo "Missing ${SCRIPT_DIR}/video_signal_probe.py"
   exit 1
 fi
 
-echo "Installerer GPIO-støtte for Cometen IRL Alerts..."
+echo "Installing GPIO support for Cometen IRL System..."
 sudo apt update
 sudo apt install -y gpiod python3-libgpiod v4l-utils
 
@@ -54,21 +54,21 @@ sudo systemctl enable "${VIDEO_SERVICE}"
 sudo systemctl restart "${VIDEO_SERVICE}"
 
 echo
-echo "GPIO-støtte er installert."
-echo "Bruker ${TARGET_USER} er lagt i gruppen gpio."
-echo "Video-probe er installert/restartet som root-tjeneste: ${VIDEO_SERVICE}"
+echo "GPIO support is installed."
+echo "User ${TARGET_USER} was added to the gpio group."
+echo "The video probe is installed/restarted as root service: ${VIDEO_SERVICE}"
 echo
-echo "Status video-probe:"
+echo "Video probe status:"
 echo "  sudo systemctl status ${VIDEO_SERVICE} --no-pager"
 echo "  cat /run/cometen-irl-video-status.json"
 echo
-echo "På BELABOX anbefales én reboot etter første GPIO-installasjon / gruppeendring:"
+echo "On BELABOX, one reboot is recommended after the first GPIO installation/group change:"
 echo "  sudo reboot"
 echo
-echo "Hvis GPIO-gruppen allerede var aktiv, kan LED-receiveren restartes direkte:"
+echo "If gpio group membership was already active, restart the receiver directly:"
 echo "  systemctl --user restart cometen-irl-alerts.service"
 echo
-echo "Pinnene kan kontrolleres med:"
+echo "GPIO pins can be checked with:"
 echo "  gpiofind PIN_32"
 echo "  gpiofind PIN_36"
 echo "  gpiofind PIN_38"
