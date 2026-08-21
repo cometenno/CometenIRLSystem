@@ -49,7 +49,21 @@ Storage=persistent
 
 The installer also ensures `/var/log/journal` exists so logs from previous boots remain available after normal reboots and, as far as they were flushed to disk, after power loss.
 
+## Repository path
+
+Fresh installations use `~/CometenIRLSystem`. Existing installations created before the rename may still use `~/CometenIRLAlerts`; keeping that old local checkout path is supported until a deliberate migration is performed.
+
 ## Install stability fixes
+
+Fresh post-rename checkout:
+
+```bash
+cd ~/CometenIRLSystem
+git pull --ff-only
+sudo bash belabox/install-stability-fixes.sh
+```
+
+Existing pre-rename checkout:
 
 ```bash
 cd ~/CometenIRLAlerts
@@ -141,6 +155,10 @@ For useful long tests:
 7. distinguish camera/USB failures from SRT/network failures
 
 This makes each failure comparable to a known baseline instead of relying on guesses after the fact.
+
+## Compatibility note
+
+Runtime service names such as `cometen-irl-alerts.service` are intentionally retained after the project rename to Cometen IRL System.
 
 ## Related documentation
 
