@@ -7,26 +7,6 @@ SERVICE_NAME="cometen-irl-browser-audio.service"
 TEMPLATE="${SCRIPT_DIR}/cometen-irl-browser-audio-user.service"
 CONFIG_PATH="${SCRIPT_DIR}/config.json"
 
-missing=()
-
-for command in python3 systemctl pw-cli wpctl xvfb-run xauth; do
-  if ! command -v "${command}" >/dev/null 2>&1; then
-    missing+=("${command}")
-  fi
-done
-
-browser=""
-for candidate in chromium chromium-browser google-chrome-stable google-chrome; do
-  if command -v "${candidate}" >/dev/null 2>&1; then
-    browser="$(command -v "${candidate}")"
-    break
-  fi
-done
-
-if [[ -z "${browser}" ]]; then
-  missing+=("chromium/chrome")
-fi
-
 if [[ ! -f "${CONFIG_PATH}" ]]; then
   echo "Mangler ${CONFIG_PATH}"
   echo "Kopier config.example.json til config.json og konfigurer receiveren først."
@@ -59,15 +39,63 @@ if [[ "${browser_enabled}" != "true" ]]; then
   exit 1
 fi
 
+missing=()
+for command in python3 systemctl pw-cli wpctl xvfb-run xauth; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    missing+=("${command}")
+  fi
+done
+
 if ((${#missing[@]} > 0)); then
-  echo "Mangler nødvendige komponenter:"
+  echo "Mangler nødvendige systemkomponenter:"
   printf '  - %s\n' "${missing[@]}"
   echo
-  echo "På Debian/Ubuntu/BELABOX-image med apt er typisk kommando:"
-  echo "  sudo apt update"
-  echo "  sudo apt install -y xvfb xauth chromium"
+  echo "På Ubuntu/BELABOX Jammy installerer du normalt disse med:"
+  echo "  sudo apt install -y xvfb xauth"
   echo
   echo "Installer bare manglende pakker. Ikke kjør full systemoppgradering."
+  exit 1
+fi
+
+configured_browser="$(
+  python3 - "${CONFIG_PATH}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+config = json.loads(path.read_text(encoding="utf-8"))
+value = str(config.get("browser_audio_browser", "auto")).strip()
+if value and value.lower() != "auto":
+    print(os.path.expandvars(os.path.expanduser(value)))
+PY
+)"
+
+browser=""
+if [[ -n "${configured_browser}" && -x "${configured_browser}" ]]; then
+  browser="${configured_browser}"
+else
+  for candidate in chromium chromium-browser google-chrome-stable google-chrome; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      browser="$(command -v "${candidate}")"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${browser}" ]]; then
+  echo "Ingen egnet Chromium/Chrome-runtime ble funnet."
+  echo
+  echo "Ubuntu 22.04/Jammy bruker Chromium som snap-overgangspakke, og 'chromium'"
+  echo "er derfor ikke en vanlig apt-pakke på dette ARM64-imaget."
+  echo "Ikke installer chromium-bsu; det er ikke nettleseren vi trenger."
+  echo
+  echo "Bruk den lokale Playwright Chromium-runtime som er laget for IRL Browser Audio:"
+  echo "  sudo apt install -y python3-venv"
+  echo "  bash install-browser-runtime.sh"
+  echo
+  echo "Kjør deretter dette scriptet på nytt."
   exit 1
 fi
 
