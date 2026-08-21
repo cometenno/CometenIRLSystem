@@ -1,6 +1,6 @@
-# Cometen IRL Alerts - Documentation
+# Cometen IRL System - Documentation
 
-This is the canonical documentation index for Cometen IRL Alerts.
+This is the canonical documentation index for Cometen IRL System.
 
 The project combines the IRL alert return channel, BELABOX-side audio, Browser Source audio, heartbeat/status, Twitch remote control, OBS admin control, automatic SRT failover/recovery, status LEDs and CometenWebAdmin integration into one coordinated system.
 
@@ -26,6 +26,18 @@ The project combines the IRL alert return channel, BELABOX-side audio, Browser S
 - [BELABOX Stability Notes](BELABOX_STABILITY.md) - known stability findings and diagnostics
 - [Field Test Log](FIELD_TEST_LOG.md) - real-world incidents with confirmed causes and operational lessons
 - [CometenWebAdmin integration](../integration/cometenwebadmin/README.md) - forwarding alerts from the web admin system
+
+## Repository rename and compatibility
+
+The repository was renamed from `CometenIRLAlerts` to `CometenIRLSystem` on 22 August 2026.
+
+Fresh clones should use:
+
+```text
+https://github.com/la1ona/CometenIRLSystem
+```
+
+Existing installations may still use a local checkout directory named `~/CometenIRLAlerts`. That local path can remain in place to avoid breaking installed service paths. Runtime identifiers such as `CometenIRL_*` globals and `cometen-irl-alerts.service` are also intentionally retained for compatibility unless a separate migration is performed.
 
 ## Security rules
 
