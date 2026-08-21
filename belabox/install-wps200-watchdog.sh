@@ -9,7 +9,7 @@ SERVICE_DST="/etc/systemd/system/cometen-wps200.service"
 ENV_DST="/etc/default/cometen-wps200"
 
 if [[ ! -f "$WATCHDOG_SRC" || ! -f "$SERVICE_SRC" ]]; then
-    echo "Mangler watchdog/service-filer i ${SCRIPT_DIR}" >&2
+    echo "Missing watchdog/service files in ${SCRIPT_DIR}" >&2
     exit 1
 fi
 
@@ -57,12 +57,12 @@ if [[ -z "$MAC" && -f "$WATCHDOG_DST" ]]; then
 fi
 
 if [[ -z "$MAC" ]]; then
-    echo "Fant ingen paret WPS200 og ingen eksisterende lokal WPS200-konfigurasjon." >&2
-    echo "Kontroller med: bluetoothctl devices && bluetoothctl info <adresse>" >&2
+    echo "No paired WPS200 and no existing local WPS200 configuration were found." >&2
+    echo "Check with: bluetoothctl devices && bluetoothctl info <address>" >&2
     exit 1
 fi
 
-echo "Installerer Cometen WPS200 watchdog v2.1..."
+echo "Installing Cometen WPS200 watchdog v2.1..."
 
 sudo install -m 0755 "$WATCHDOG_SRC" "$WATCHDOG_DST"
 sudo install -m 0644 "$SERVICE_SRC" "$SERVICE_DST"
