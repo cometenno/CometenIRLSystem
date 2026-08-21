@@ -59,40 +59,47 @@ Lim inn Sound Alerts Browser Source-URL når scriptet spør.
 
 Scriptet endrer bare Browser Audio-feltene i eksisterende `config.json`. Relay-token, lydmapping, LED-oppsett og andre lokale innstillinger beholdes.
 
-Standard sink-match er den samme som remote control bruker, normalt:
+Standard sink-match hentes fra eksisterende remote-control-oppsett. På det verifiserte oppsettet 21. august 2026 var sink-match:
 
 ```text
-WPS200
+soundcore Select 4 Go
 ```
 
-## 4. Installer avhengigheter ved behov
+## 4. Installer Browser Audio-runtime
 
 Browser Audio trenger:
 
-- Chromium eller Chrome
+- Chromium/Chrome-runtime
 - Xvfb / `xvfb-run`
 - `xauth`
 - PipeWire `pw-cli`
 - `wpctl`
 
-Kjør install-scriptet først:
+På Ubuntu 22.04/Jammy ARM64 i BELABOX-imaget finnes ikke vanlig apt-`chromium` som forventet. `chromium-bsu` er et spill og skal ikke installeres. Snap-sporet brukes heller ikke i dette oppsettet.
+
+Installer først basispakker:
 
 ```bash
-bash install-browser-audio.sh
+sudo apt install -y xvfb xauth python3-venv
 ```
 
-Hvis noe mangler stopper scriptet og viser komponentene.
-
-På Debian/Ubuntu-baserte image er typisk installasjon:
+Installer deretter den lokale Playwright Chromium-runtime som er laget for IRL Browser Audio:
 
 ```bash
-sudo apt update
-sudo apt install -y xvfb xauth chromium
+bash install-browser-runtime.sh
 ```
 
-Installer bare manglende pakker. Ikke kjør full systemoppgradering bare for Browser Audio.
+Runtime lagres under:
 
-Kjør deretter install-scriptet igjen:
+```text
+~/.local/share/cometen-irl-browser-audio/
+```
+
+Install-scriptet setter automatisk korrekt lokal browser-path i `receiver/config.json`.
+
+På BELABOX-imaget kan `/tmp` være begrenset selv om rot-disken har mye ledig plass. Runtime-installeren bruker derfor egen temp-katalog under `~/.local/share/cometen-irl-browser-audio/tmp` slik at store Chromium-nedlastinger og utpakking ikke stopper med `ENOSPC`.
+
+Installer/start deretter tjenesten:
 
 ```bash
 bash install-browser-audio.sh
@@ -108,13 +115,13 @@ cometen-irl-browser-audio.service
 
 Den:
 
-1. venter på at WPS200 finnes som PipeWire `Audio/Sink`
-2. setter WPS200 som standard sink
+1. venter på at konfigurert Bluetooth-sink finnes som PipeWire `Audio/Sink`
+2. setter sinken som standard lydutgang
 3. starter Chromium i en virtuell Xvfb-skjerm
 4. åpner Browser Source-URL-en med autoplay aktivert
 5. holder browseren aktiv selv om vinduet ikke er synlig
 6. overvåker PipeWire sink-ID
-7. restarter browseren dersom WPS200 kobles opp igjen med ny dynamisk node-ID
+7. restarter browseren dersom Bluetooth-sinken kobles opp igjen med ny dynamisk node-ID
 8. starter browseren på nytt dersom Chromium krasjer
 
 Browser Source-URL-en maskeres i loggen.
@@ -133,7 +140,7 @@ Følg logg:
 journalctl --user -u cometen-irl-browser-audio.service -f
 ```
 
-Når WPS200 er tilkoblet skal loggen blant annet vise at sinken er funnet og Chromium startet.
+Når Bluetooth-høyttaleren er tilkoblet skal loggen vise at riktig PipeWire sink er funnet og at Chromium er startet.
 
 Åpne deretter Sound Alerts Dashboard og kjør:
 
@@ -144,9 +151,21 @@ Play test alert
 Målet er at samme test-alert høres:
 
 - i OBS/stream-miksen hjemme
-- fysisk på WPS200/Soundcore ute ved BELABOX
+- fysisk på Bluetooth-høyttaleren ute ved BELABOX
 
-Dette må praktisk verifiseres. Sound Alerts-delen regnes ikke som produksjonsverifisert før samme alert er bekreftet samtidig gjennom begge klientene.
+### Verifisert 21. august 2026
+
+Praktisk test på faktisk ROCK 5B+/BELABOX bekreftet:
+
+- `cometen-irl-browser-audio.service` står `active (running)`
+- lokal Playwright Chromium kjører under Xvfb
+- PipeWire fant `soundcore Select 4 Go` og satte den som standard sink
+- Sound Alerts Browser Source lastes på BELABOX
+- testlyd fra Sound Alerts høres fysisk på Bluetooth-høyttaleren
+
+Dermed er **Sound Alerts -> BELABOX -> PipeWire -> Bluetooth-høyttaler** praktisk verifisert.
+
+Samtidig avspilling i både OBS-klienten og BELABOX-klienten regnes som full ende-til-ende-verifisering og skal bekreftes separat hvis dette ikke allerede observeres i samme test.
 
 ## 7. Restart og stopp
 
@@ -177,14 +196,14 @@ systemctl --user disable --now cometen-irl-browser-audio.service
 
 ## 8. Konfigurasjonsfelt
 
-`configure-browser-audio.py` legger inn disse feltene i lokal `config.json`:
+`configure-browser-audio.py` legger inn Browser Audio-feltene i lokal `config.json`, blant annet:
 
 ```json
 {
   "browser_audio_enabled": true,
   "browser_audio_url": "DIN_PRIVATE_BROWSER_SOURCE_URL",
-  "browser_audio_sink_match": "WPS200",
-  "browser_audio_browser": "auto",
+  "browser_audio_sink_match": "soundcore Select 4 Go",
+  "browser_audio_browser": "/home/user/.local/share/cometen-irl-browser-audio/.../chrome",
   "browser_audio_profile_directory": "~/.cache/cometen-irl-browser-audio/chromium-profile",
   "browser_audio_sink_wait_seconds": 120,
   "browser_audio_sink_check_seconds": 5,
@@ -195,10 +214,12 @@ systemctl --user disable --now cometen-irl-browser-audio.service
 }
 ```
 
+Den eksakte browser-pathen settes automatisk av `install-browser-runtime.sh` og skal ikke hardkodes manuelt.
+
 Ikke kopier eksempel-URL-en over en fungerende config. Bruk konfigurasjonsscriptet.
 
 ## Status
 
-Implementert 21. august 2026.
+Implementert og BELABOX/Bluetooth-verifisert 21. august 2026.
 
-Kode og systemd-oppsett er lagt inn i repoet. Praktisk Sound Alerts-test på faktisk ROCK 5B+/WPS200 gjenstår før funksjonen markeres produksjonsverifisert.
+Browser Source-avspilling fra Sound Alerts fungerer på faktisk ROCK 5B+ gjennom PipeWire til `soundcore Select 4 Go`. Full dobbelklient-test (OBS + BELABOX samtidig) beholdes som siste eksplisitte ende-til-ende-bekreftelse dersom den ikke er observert i samme alert-test.
