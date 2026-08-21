@@ -17,7 +17,7 @@ PipeWire + WirePlumber
 WPS200 connects automatically
     |
     v
-CometenIRLAlerts receiver + silent keepalive
+Cometen IRL System receiver + silent keepalive
     |
     v
 Follow/Sub/etc. events from relay play locally
@@ -41,6 +41,22 @@ The original verified setup used:
 - BELABOX user `user`, UID 1000
 
 Usernames, UIDs, MAC addresses and paths must be adjusted on other installations.
+
+## Repository path compatibility
+
+Fresh installations cloned after the repository rename use:
+
+```text
+~/CometenIRLSystem
+```
+
+Existing installations created before 22 August 2026 may still use:
+
+```text
+~/CometenIRLAlerts
+```
+
+Do not rename a working existing checkout just for branding. Installed service files and local keepalive commands may contain absolute paths. Keep the existing path until a deliberate migration and service reinstall is performed.
 
 ## 1. Install audio/Bluetooth packages
 
@@ -292,7 +308,17 @@ Check:
 sudo systemctl status cometen-wps200.service --no-pager
 ```
 
-## 6. Install CometenIRLAlerts user services
+## 6. Install Cometen IRL System user services
+
+Fresh post-rename checkout:
+
+```bash
+cd ~/CometenIRLSystem/receiver
+bash ./install-user-service.sh
+sudo loginctl enable-linger user
+```
+
+Existing pre-rename checkout:
 
 ```bash
 cd ~/CometenIRLAlerts/receiver
@@ -308,16 +334,16 @@ systemctl --user is-enabled wireplumber.service
 systemctl --user is-enabled cometen-irl-alerts.service
 ```
 
-All should be enabled.
+All should be enabled. The `cometen-irl-alerts.service` name is intentionally retained as a runtime compatibility identifier.
 
 ## 7. Silent audio keepalive
 
 On the tested BELABOX version, piping raw silence through `pw-cat` was not reliable in every configuration. The verified headless workaround was a real silent PCM WAV file looped through `pw-play`.
 
-Create `receiver/sounds/keepalive.wav`:
+Create `receiver/sounds/keepalive.wav` from the active checkout. Fresh path example:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 
 python3 - <<'PY'
 import wave
@@ -339,16 +365,18 @@ print(path)
 PY
 ```
 
-Example local receiver config:
+Example local receiver config for a **fresh** post-rename checkout:
 
 ```json
 {
   "audio_keepalive_enabled": true,
-  "audio_keepalive_command": "bash -c 'while true; do pw-play /home/user/CometenIRLAlerts/receiver/sounds/keepalive.wav || sleep 1; done'",
+  "audio_keepalive_command": "bash -c 'while true; do pw-play /home/user/CometenIRLSystem/receiver/sounds/keepalive.wav || sleep 1; done'",
   "audio_keepalive_input": "/dev/zero",
   "audio_keepalive_restart_seconds": 5
 }
 ```
+
+On an existing pre-rename installation, keep the working `/home/user/CometenIRLAlerts/...` path unless the checkout directory is deliberately migrated and the service/configuration is updated at the same time.
 
 Do not commit the real `receiver/config.json`.
 
@@ -411,7 +439,7 @@ Power on BELABOX
 -> PipeWire/WirePlumber start
 -> reconnect watchdog connects speaker
 -> silent keepalive keeps audio path active
--> CometenIRLAlerts receiver polls relay
+-> Cometen IRL System receiver polls relay
 -> Streamer.bot/WebAdmin alerts play on the speaker
 ```
 
