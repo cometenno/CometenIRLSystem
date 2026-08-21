@@ -257,9 +257,13 @@ Run it during first-time setup and after setup-schema changes. It creates missin
 
 ## OBS Output Timer warning
 
-OBS has a separate built-in `Tools -> Output Timer` feature. If it is enabled at the same time as the project Ending helper, OBS can stop for reasons unrelated to Cometen IRL Alerts.
+OBS has a separate built-in `Tools -> Output Timer` feature. If it is enabled at the same time as the project Ending helper, OBS can stop for reasons unrelated to Cometen IRL System.
 
 Keep the OBS Output Timer disabled unless it is intentionally part of the workflow.
+
+## Compatibility note
+
+The repository/project branding is Cometen IRL System. Existing action, file and global identifiers using the `CometenIRL_` prefix are intentionally retained for compatibility.
 
 ## Verification status
 
