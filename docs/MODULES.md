@@ -1,6 +1,6 @@
 # Module overview
 
-This page explains the major Cometen IRL Alerts modules, where they run, what they are responsible for and how they fit together.
+This page explains the major Cometen IRL System modules, where they run, what they are responsible for and how they fit together.
 
 ## 1. Streamer.bot alert sender
 
@@ -45,7 +45,7 @@ Purpose:
 - executes the hardcoded remote-control action set
 - returns command results to the relay
 
-The receiver is installed as the user service `cometen-irl-alerts.service`.
+The receiver is installed as the user service `cometen-irl-alerts.service`. The service name is retained as a compatibility identifier after the repository rename.
 
 ## 4. Heartbeat
 
