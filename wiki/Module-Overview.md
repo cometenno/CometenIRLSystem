@@ -1,6 +1,6 @@
 # Module Overview
 
-This page explains where each Cometen IRL Alerts module runs and what it is used for.
+This page explains where each Cometen IRL System module runs and what it is used for.
 
 ## Streaming PC modules
 
@@ -89,10 +89,14 @@ Drives physical system/audio/video/encoder indicators on the BELABOX enclosure.
 
 A small root system service observes the BELABOX encoder process/device file descriptors and publishes a safe status file for the normal user receiver/LED service.
 
+## Compatibility names
+
+The repository branding is now Cometen IRL System, but existing runtime identifiers such as `CometenIRL_*`, `IRLAlertsController` and `cometen-irl-alerts.service` are retained for compatibility.
+
 ## Responsibility rule
 
 Automatic OBS signal-loss/recovery scene changes belong to `IRLAlertsController` only. Do not run another automatic scene switcher such as NOALBS in parallel.
 
 For the full maintained module reference, see:
 
-https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/MODULES.md
+https://github.com/la1ona/CometenIRLSystem/blob/main/docs/MODULES.md
