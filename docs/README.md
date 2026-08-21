@@ -24,6 +24,7 @@ The project combines the IRL alert return channel, BELABOX-side audio, Browser S
 - [Chat URL Guard](CHAT_URL_GUARD.md) - Twitch URL policy and deletion of URL-bearing commands
 - [BELABOX Headless Setup](BELABOX_HEADLESS.md) - PipeWire, Bluetooth and headless ROCK 5B+ notes
 - [BELABOX Stability Notes](BELABOX_STABILITY.md) - known stability findings and diagnostics
+- [Field Test Log](FIELD_TEST_LOG.md) - real-world incidents with confirmed causes and operational lessons
 - [CometenWebAdmin integration](../integration/cometenwebadmin/README.md) - forwarding alerts from the web admin system
 
 ## Security rules
