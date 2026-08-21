@@ -8,13 +8,13 @@ TEMPLATE="${SCRIPT_DIR}/cometen-irl-browser-audio-user.service"
 CONFIG_PATH="${SCRIPT_DIR}/config.json"
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
-  echo "Mangler ${CONFIG_PATH}"
-  echo "Kopier config.example.json til config.json og konfigurer receiveren først."
+  echo "Missing ${CONFIG_PATH}"
+  echo "Copy config.example.json to config.json and configure the receiver first."
   exit 1
 fi
 
 if [[ ! -f "${TEMPLATE}" ]]; then
-  echo "Mangler service-malen ${TEMPLATE}"
+  echo "Missing service template ${TEMPLATE}"
   exit 1
 fi
 
@@ -33,8 +33,8 @@ PY
 )"
 
 if [[ "${browser_enabled}" != "true" ]]; then
-  echo "browser_audio_enabled er ikke aktivert i config.json."
-  echo "Kjør først:"
+  echo "browser_audio_enabled is not enabled in config.json."
+  echo "Run this first:"
   echo "  python3 configure-browser-audio.py"
   exit 1
 fi
@@ -47,13 +47,13 @@ for command in python3 systemctl pw-cli wpctl xvfb-run xauth; do
 done
 
 if ((${#missing[@]} > 0)); then
-  echo "Mangler nødvendige systemkomponenter:"
+  echo "Missing required system components:"
   printf '  - %s\n' "${missing[@]}"
   echo
-  echo "På Ubuntu/BELABOX Jammy installerer du normalt disse med:"
+  echo "On Ubuntu/BELABOX Jammy, these are normally installed with:"
   echo "  sudo apt install -y xvfb xauth"
   echo
-  echo "Installer bare manglende pakker. Ikke kjør full systemoppgradering."
+  echo "Install only the missing packages. Do not perform a full system upgrade just for this module."
   exit 1
 fi
 
@@ -85,17 +85,17 @@ else
 fi
 
 if [[ -z "${browser}" ]]; then
-  echo "Ingen egnet Chromium/Chrome-runtime ble funnet."
+  echo "No suitable Chromium/Chrome runtime was found."
   echo
-  echo "Ubuntu 22.04/Jammy bruker Chromium som snap-overgangspakke, og 'chromium'"
-  echo "er derfor ikke en vanlig apt-pakke på dette ARM64-imaget."
-  echo "Ikke installer chromium-bsu; det er ikke nettleseren vi trenger."
+  echo "Ubuntu 22.04/Jammy uses Chromium as a snap transition package, so 'chromium'"
+  echo "is not a normal apt package on this ARM64 image."
+  echo "Do not install chromium-bsu; it is not the web browser required here."
   echo
-  echo "Bruk den lokale Playwright Chromium-runtime som er laget for IRL Browser Audio:"
+  echo "Use the local Playwright Chromium runtime provided for Cometen IRL System Browser Audio:"
   echo "  sudo apt install -y python3-venv"
   echo "  bash install-browser-runtime.sh"
   echo
-  echo "Kjør deretter dette scriptet på nytt."
+  echo "Then run this installer again."
   exit 1
 fi
 
@@ -109,13 +109,13 @@ systemctl --user daemon-reload
 systemctl --user enable --now "${SERVICE_NAME}"
 
 echo
-echo "Cometen IRL Browser Audio er installert."
+echo "Cometen IRL System Browser Audio is installed."
 echo "Browser: ${browser}"
 echo
 echo "Status:"
 echo "  systemctl --user status ${SERVICE_NAME}"
 echo
-echo "Logg:"
+echo "Log:"
 echo "  journalctl --user -u ${SERVICE_NAME} -f"
 echo
-echo "Test deretter 'Play test alert' i Sound Alerts Dashboard."
+echo "Then test with 'Play test alert' in the Sound Alerts Dashboard."
