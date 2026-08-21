@@ -1,6 +1,6 @@
-# Cometen IRL Alerts Wiki
+# Cometen IRL System Wiki
 
-Cometen IRL Alerts is the coordinated IRL control/return-channel system used with the Cometen BELABOX setup.
+Cometen IRL System is the coordinated IRL control, monitoring and return-channel system used with the Cometen BELABOX setup.
 
 It covers alert delivery, BELABOX-side audio, Browser Source audio, receiver health, remote control, OBS IRL workflow, SRT failover/recovery, physical status LEDs, Twitch URL safety and CometenWebAdmin integration.
 
@@ -49,11 +49,15 @@ IRLAlertsController -> OBS fallback/recovery
 
 The detailed maintained documentation also lives in the main repository under `docs/`:
 
-- Documentation home: https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/README.md
-- Installation: https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/INSTALLATION.md
-- Architecture: https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/architecture.md
-- Module overview: https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/MODULES.md
-- Commands: https://github.com/la1ona/CometenIRLAlerts/blob/main/docs/COMMANDS.md
+- Documentation home: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/README.md
+- Installation: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/INSTALLATION.md
+- Architecture: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/architecture.md
+- Module overview: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/MODULES.md
+- Commands: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/COMMANDS.md
+
+## Repository rename compatibility
+
+The repository was renamed from `CometenIRLAlerts` to `CometenIRLSystem` on 22 August 2026. Existing runtime identifiers and installed service names are intentionally kept compatible, so names such as `CometenIRL_*` and `cometen-irl-alerts.service` may still appear throughout setup and troubleshooting documentation.
 
 ## Security
 
