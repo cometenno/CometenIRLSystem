@@ -1,306 +1,356 @@
-# Oppsett i Streamer.bot
+# Streamer.bot setup
 
-Sist oppdatert: 16. august 2026.
+Streamer.bot is the control plane on the streaming PC. It sends alert/control events to the relay, controls OBS locally, runs the BELABOX ingest watchdog and exposes the Twitch chat commands.
 
-Streamer.bot-delen av Cometen IRL Alerts består nå av:
+## Required persistent globals
 
-```text
-CometenIRL_Setup.cs           oppretter manglende globals/defaults
-CometenIRL_Send.cs            alert-sender
-CometenIRL_RemoteControl.cs   remote control/status
-CometenIRL_AdminControl.cs    IRL admin/chat control
-CometenIRL_EndAutoStop.cs     Ending auto-stop helper
-IRLAlertsController.cs        BELABOX/OBS watchdog-controller
-```
-
-Alle hører til samme Cometen IRL Alerts-modul.
-
-## 1. Kjør Setup-action
-
-Lag action:
-
-```text
-CometenIRL_Setup
-```
-
-Legg inn hele:
-
-```text
-streamerbot/CometenIRL_Setup.cs
-```
-
-Kompiler og kjør actionen én gang.
-
-Setup v1.0:
-
-- oppretter manglende persisted globals med standardverdier
-- overskriver ikke globals som allerede finnes
-- kan kjøres på nytt etter oppdateringer
-- setter `CometenIRL_SetupVersion = 1.0`
-- oppretter sender-token og BELABOX stream-ID som tomme dersom de mangler, slik at hemmeligheter ikke hardkodes
-- starter Channel Points-automatikken som `false` på en fersk installasjon til reward-gruppene er konfigurert
-
-Verifisert 16. august 2026: eksisterende verdier ble beholdt, og en slettet `CometenIRL_SetupVersion` ble opprettet igjen av Setup-actionen.
-
-## 2. Installasjonsspesifikke globals
-
-Etter Setup må disse fylles med korrekt verdi for installasjonen:
+Core relay globals:
 
 ```text
 CometenIRL_RelayUrl
 CometenIRL_SenderToken
+```
+
+Watchdog/admin globals commonly used:
+
+```text
 CometenIRL_BelaboxStreamId
+CometenIRL_BelaboxStatsBaseUrl
+CometenIRL_FallbackScene
+CometenIRL_DefaultReturnScene
+CometenIRL_StartingSoonScene
+CometenIRL_BrbScene
+CometenIRL_EndingScene
+CometenIRL_EndingSeconds
+CometenIRL_WatchdogLiveOnly
+CometenIRL_WatchdogArmed
+CometenIRL_IrlMode
+CometenIRL_Language
+CometenIRL_ManageRewards
+CometenIRL_NormalRewardGroup
+CometenIRL_IrlRewardGroup
 ```
 
-Token og stream-ID skal ikke committes.
+Never hardcode sender tokens or BELABOX stream IDs in repository files.
 
-BELABOX stats-base har standard:
+## Core actions
+
+### 1. Alert sender
+
+Action name:
 
 ```text
-CometenIRL_BelaboxStatsBaseUrl = http://eu.srt.belabox.net:8080
+Cometen IRL Notifications - Send
 ```
 
-## 3. OBS-scener
-
-Standard scenenavn fra Setup:
+Code:
 
 ```text
-CometenIRL_StartingSoonScene  = IRL - STARTING SOON
-CometenIRL_DefaultReturnScene = BELABOX SRT
-CometenIRL_FallbackScene      = IRL - SIGNAL MISTET
-CometenIRL_BrbScene           = IRL - BRB
-CometenIRL_EndingScene        = IRL - ENDING
+streamerbot/CometenIRL_Send.cs
 ```
 
-Navnene kan endres via globals dersom en annen installasjon bruker andre OBS-scener.
+Purpose: send normal alert events through the relay to BELABOX.
 
-## 4. Sender-action
+### 2. Remote Control
 
-Lag action for `streamerbot/CometenIRL_Send.cs`.
-
-Senderen bruker:
+Action name:
 
 ```text
-CometenIRL_RelayUrl
-CometenIRL_SenderToken
+CometenIRL_RemoteControl
 ```
 
-Eksempler på eventtyper:
-
-```text
-follow
-sub
-resub
-gifted
-giftbomb
-raid
-bits
-donation
-youtubesub
-```
-
-## 5. Remote control
-
-Bruk hele:
+Code:
 
 ```text
 streamerbot/CometenIRL_RemoteControl.cs
 ```
 
-Dette dekker blant annet:
+Purpose: volume, mute/unmute, status and test alert.
+
+### 3. Browser Audio control
+
+Action name:
 
 ```text
-!volum
-!volNN
-!volup
-!voldown
-!mute
-!unmute
-!irlstatus
-!alerttest
+CometenIRL_BrowserAudioControl
 ```
 
-Remote-responser følger persisted `CometenIRL_Language` (`no`/`en`).
-
-Detaljer:
+Code:
 
 ```text
-docs/REMOTE_CONTROL_NO.md
+streamerbot/CometenIRL_BrowserAudioControl.cs
 ```
 
-## 6. Admin control
+Purpose: manage named Browser Audio sources on BELABOX.
 
-Bruk:
+Create one Twitch command:
+
+```text
+!irlaudio
+```
+
+Use **Starts With** so the remainder of the command is available as input.
+
+Recommended permission: Broadcaster + Moderators.
+
+### 4. IRL Admin Control
+
+Action name:
+
+```text
+CometenIRL_AdminControl
+```
+
+Code:
 
 ```text
 streamerbot/CometenIRL_AdminControl.cs
 ```
 
-Gjeldende testede versjon er **v1.3**.
+Purpose: local OBS start/go/BRB/back/end/stop, scene aliases, Channel Points and persistent language.
 
-Kommandoer:
+Recommended permission: Broadcaster only.
 
-```text
-!irlstart
-!irlgo
-!irlbrb
-!irlback
-!irlend
-!irlstop
-!irlscene <alias>
-!irlpoints on|off
-!irllang no|en
-```
+### 5. Ending helper
 
-Anbefalt rettighet er Broadcaster only.
-
-`!irlgo`, `!irlback` og `!irlscene srt/live/go` setter aktiv IRL-livssyklus (`CometenIRL_IrlMode=true`) og armer watchdog.
-
-Detaljer:
-
-```text
-docs/ADMIN_CONTROL_NO.md
-```
-
-## 7. Ending helper
-
-Lag action:
+Action name:
 
 ```text
 CometenIRL_EndAutoStop
 ```
 
-med:
+Code:
 
 ```text
 streamerbot/CometenIRL_EndAutoStop.cs
 ```
 
-Gjeldende helper er v1.1.
+Do not give this action a Twitch command trigger.
 
-Anbefalt egen queue:
+Put it on a dedicated queue such as:
 
 ```text
 IRL END
 ```
 
-Standard Ending-tid:
+Do not use the same queue as the watchdog.
+
+### 6. BELABOX ingest watchdog
+
+Action/controller:
 
 ```text
-CometenIRL_EndingSeconds = 25
+IRLAlertsController
 ```
 
-`!irlend` er verifisert til å vise Ending, stoppe OBS automatisk og returnere IrlMode til false.
-
-## 8. Channel Points
-
-Setup oppretter:
+Code:
 
 ```text
-CometenIRL_ManageRewards = false
+streamerbot/IRLAlertsController.cs
+```
+
+Purpose: read BELABOX ingest telemetry and control automatic OBS fallback/recovery.
+
+This must be the only automatic signal-loss scene authority.
+
+### 7. IRL setup action
+
+Action name:
+
+```text
+CometenIRL_Setup
+```
+
+Code:
+
+```text
+streamerbot/CometenIRL_Setup.cs
+```
+
+Run once on initial setup and again after setup-schema changes. It creates missing persistent globals while preserving existing values.
+
+## Twitch command mapping
+
+Recommended:
+
+```text
+!irlstart   Exact -> CometenIRL_AdminControl
+!irlgo      Exact -> CometenIRL_AdminControl
+!irlbrb     Exact -> CometenIRL_AdminControl
+!irlback    Exact -> CometenIRL_AdminControl
+!irlend     Exact -> CometenIRL_AdminControl
+!irlstop    Exact -> CometenIRL_AdminControl
+!irlscene   Starts With -> CometenIRL_AdminControl
+!irlpoints  Starts With -> CometenIRL_AdminControl
+!irllang    Starts With -> CometenIRL_AdminControl
+
+!irlaudio   Starts With -> CometenIRL_BrowserAudioControl
+```
+
+Remote-control commands may be mapped individually to `CometenIRL_RemoteControl`:
+
+```text
+!irlstatus
+!alerttest
+!volum
+!vol
+!volup
+!voldown
+!mute
+!unmute
+```
+
+See [Commands](COMMANDS.md) for the full syntax.
+
+## OBS connection
+
+`CometenIRL_AdminControl` expects the configured OBS connection to be available in Streamer.bot.
+
+Verify:
+
+- OBS WebSocket is enabled
+- Streamer.bot is connected to OBS
+- scene names match the persistent globals
+- the BELABOX SRT scene exists
+- Starting Soon, BRB, Ending and Signal Lost scenes exist if those functions are enabled
+
+## Normal IRL workflow
+
+```text
+!irlstart
+  -> Starting Soon
+  -> watchdog disarmed
+  -> optional IRL Channel Points mode
+  -> OBS stream starts
+
+!irlgo
+  -> BELABOX SRT
+  -> watchdog armed
+
+!irlbrb
+  -> BRB
+  -> watchdog disarmed
+
+!irlback
+  -> BELABOX SRT
+  -> watchdog armed
+
+!irlend
+  -> Ending
+  -> watchdog disarmed
+  -> delayed auto-stop
+  -> normal rewards restored
+  -> IRL mode off
+```
+
+`!irlstop` remains available as the immediate/manual stop path.
+
+## Watchdog test mode
+
+For offline testing:
+
+```text
+CometenIRL_WatchdogLiveOnly = false
+```
+
+For production:
+
+```text
+CometenIRL_WatchdogLiveOnly = true
+```
+
+When `true`, the watchdog does not automatically switch OBS scenes while OBS is not streaming.
+
+`CometenIRL_WatchdogArmed` is separate. Admin commands disarm the watchdog on Starting Soon/BRB/Ending and arm it again on BELABOX SRT.
+
+## Channel Point groups
+
+Optional automatic group switching uses:
+
+```text
+CometenIRL_ManageRewards
 CometenIRL_NormalRewardGroup = NORMAL
 CometenIRL_IrlRewardGroup = IRL
 ```
 
-Opprett/organiser reward-gruppene `NORMAL` og `IRL` i Streamer.bot. Rewards som skal fungere både normalt og på IRL kan stå utenfor disse gruppene.
-
-Når gruppene er klare:
+When automatic management is enabled:
 
 ```text
-CometenIRL_ManageRewards = true
+IRL mode:
+  NORMAL disabled
+  IRL enabled
+
+Normal mode:
+  IRL disabled
+  NORMAL enabled
 ```
 
-Verifisert flyt:
+Rewards that should always remain available should not be placed in either managed group.
+
+## Language
+
+Persistent global:
 
 ```text
-!irlstart
--> NORMAL disabled
--> IRL enabled
-
-!irlend
--> etter auto-stop: IRL disabled
--> NORMAL enabled
+CometenIRL_Language
 ```
 
-Manuell override er verifisert med:
+Values:
 
 ```text
-!irlpoints on
-!irlpoints off
+no
+en
 ```
 
-## 9. BELABOX watchdog
-
-`IRLAlertsController.cs` er gjeldende **v10**.
-
-Viktige globals:
+Change manually with:
 
 ```text
-CometenIRL_WatchdogLiveOnly = true
-CometenIRL_WatchdogArmed
-CometenIRL_BelaboxFailChecks = 2
-CometenIRL_BelaboxQueryFailChecks = 3
-CometenIRL_BelaboxRecoverChecks = 5
+!irllang no
+!irllang en
 ```
 
-`CometenIRL_WatchdogLiveOnly=true` er produksjonsverifisert. Watchdog bruker BELABOX Cloud ingest-stats og `CPH.ObsSetScene()` som sceneautoritet.
+The language does not change automatically during start/stop/reboot.
 
-Verifisert:
+## URL Guard
 
-```text
-signal OK       -> BELABOX SRT
-signal borte    -> IRL - SIGNAL MISTET
-signal stabilt  -> automatisk recovery
-OBS offline     -> ingen scene-switch når LiveOnly=true
-```
+Use one global Twitch Chat Message action for URL filtering.
 
-Detaljer:
+It should:
 
-```text
-docs/WATCHDOG_HEARTBEAT_NO.md
-```
+- allow ordinary URLs from configured trusted roles
+- delete ordinary URLs from other users
+- delete URL-bearing command messages after the event has been captured
 
-## 10. Runtime/status globals
+Do not run two URL Guard actions in parallel.
 
-Setup oppretter også runtime/statusverdier som controlleren bruker:
+See [Chat URL Guard](CHAT_URL_GUARD.md).
 
-```text
-CometenIRL_BelaboxConnected
-CometenIRL_BelaboxBitrate
-CometenIRL_BelaboxRtt
-CometenIRL_BelaboxDroppedPackets
-CometenIRL_BelaboxState
-CometenIRL_BelaboxFailCount
-CometenIRL_BelaboxRecoverCount
-CometenIRL_BelaboxQueryFailCount
-CometenIRL_SrtFallbackActive
-CometenIRL_SrtReturnScene
-```
+## Queue separation
 
-Flere av disse skrives løpende av watchdog og kan derfor bli opprettet igjen automatisk dersom de slettes mens controlleren kjører.
+Recommended:
 
-## 11. CometenWebAdmin
+- watchdog/control logic on its normal queue
+- `CometenIRL_EndAutoStop` on a dedicated queue
 
-Ved bruk av:
+Do not let a delayed Ending helper block watchdog processing.
 
-```text
-integration/cometenwebadmin/irl-forward.js
-```
+## Verification checklist
 
-skal samme alert ikke også sendes via en separat IRL-sub-action. Det gir doble varsler.
+1. `CometenIRL_Setup` completes.
+2. `!irlstatus` returns a BELABOX result.
+3. volume/mute/test commands work.
+4. `!irlstart` starts OBS on Starting Soon.
+5. `!irlgo` selects BELABOX SRT and arms watchdog.
+6. `!irlbrb`/`!irlback` work.
+7. `!irlend` switches to Ending and auto-stops OBS.
+8. watchdog fallback/recovery works in test mode.
+9. watchdog works with `WatchdogLiveOnly=true` during a real stream.
+10. Browser Audio status/on/off works and private URL commands are removed from chat.
 
-## 12. Status / videre installasjonspakke
+## Related documentation
 
-Per 16. august 2026 er koden og Setup-actionen et fungerende utgangspunkt for en senere komplett Streamer.bot import/export-pakke.
-
-Planlagt sluttmål:
-
-```text
-Import Streamer.bot-pakke
--> kjør CometenIRL_Setup
--> fyll inn relay/token/BELABOX stream-ID
--> kontroller OBS-scener og reward-grupper
--> ferdig
-```
-
-Selve komplette eksportpakken er **ikke laget ennå**.
+- [Commands](COMMANDS.md)
+- [OBS Admin Control](OBS_ADMIN_CONTROL.md)
+- [Remote Control](REMOTE_CONTROL.md)
+- [Browser Audio](BROWSER_AUDIO.md)
+- [Watchdog and Heartbeat](WATCHDOG_HEARTBEAT.md)
