@@ -9,17 +9,17 @@ BROWSERS_DIR="${RUNTIME_ROOT}/ms-playwright"
 TMP_DIR="${RUNTIME_ROOT}/tmp"
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
-  echo "Mangler ${CONFIG_PATH}"
+  echo "Missing ${CONFIG_PATH}"
   exit 1
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 ble ikke funnet."
+  echo "python3 was not found."
   exit 1
 fi
 
 if ! python3 -m venv --help >/dev/null 2>&1; then
-  echo "python3-venv mangler. Installer først:"
+  echo "python3-venv is missing. Install it first:"
   echo "  sudo apt install -y python3-venv"
   exit 1
 fi
@@ -27,7 +27,7 @@ fi
 mkdir -p "${RUNTIME_ROOT}" "${BROWSERS_DIR}" "${TMP_DIR}"
 chmod 700 "${RUNTIME_ROOT}" "${TMP_DIR}" || true
 
-# BELABOX-images can have a small tmpfs-backed /tmp even when / has hundreds of GB free.
+# BELABOX images can have a small tmpfs-backed /tmp even when / has hundreds of GB free.
 # Force Playwright/pip temporary downloads and extraction to the runtime directory on /home.
 export TMPDIR="${TMP_DIR}"
 export TMP="${TMP_DIR}"
@@ -54,7 +54,7 @@ PY
 )"
 
 if [[ -z "${browser_path}" || ! -x "${browser_path}" ]]; then
-  echo "Playwright Chromium ble lastet ned, men executable ble ikke funnet."
+  echo "Playwright Chromium was downloaded, but the executable was not found."
   exit 1
 fi
 
@@ -75,9 +75,9 @@ os.replace(tmp, path)
 PY
 
 echo
-echo "Playwright Chromium er installert lokalt for IRL Browser Audio."
+echo "Playwright Chromium is installed locally for Cometen IRL System Browser Audio."
 echo "Browser: ${browser_path}"
-echo "config.json er oppdatert med lokal browser-path."
+echo "config.json was updated with the local browser path."
 echo
-echo "Neste steg:"
+echo "Next step:"
 echo "  bash install-browser-audio.sh"
