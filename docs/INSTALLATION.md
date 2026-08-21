@@ -1,8 +1,8 @@
 # Installation
 
-This is the canonical setup and update guide for Cometen IRL Alerts.
+This is the canonical setup and update guide for Cometen IRL System.
 
-Last updated: 21 August 2026.
+Last updated: 22 August 2026.
 
 ## System layout
 
@@ -85,18 +85,34 @@ BELABOX images may differ from stock Ubuntu/Debian. Avoid unnecessary full-syste
 
 ## 2. Clone the repository
 
+Fresh installation:
+
 ```bash
 cd ~
-git clone https://github.com/la1ona/CometenIRLAlerts.git
-cd CometenIRLAlerts
+git clone https://github.com/la1ona/CometenIRLSystem.git
+cd CometenIRLSystem
 ```
 
-Update later with:
+Update a fresh installation later with:
 
 ```bash
-cd ~/CometenIRLAlerts
+cd ~/CometenIRLSystem
 git pull
 ```
+
+### Existing installations created before the rename
+
+The repository was renamed from `CometenIRLAlerts` to `CometenIRLSystem` on 22 August 2026.
+
+An existing BELABOX checkout may still be located at:
+
+```text
+~/CometenIRLAlerts
+```
+
+That local directory does not need to be renamed immediately. Keeping it avoids breaking absolute paths already installed into systemd services. GitHub redirects the renamed repository, so the existing checkout can continue to pull normally.
+
+If the existing installation uses the old local path, use that path in the update commands in this guide until a deliberate local-path migration is performed.
 
 Local secrets must remain in gitignored files:
 
@@ -140,8 +156,10 @@ Never put these tokens in GitHub, screenshots or public chat.
 Upload the PHP files from `relay/` to a dedicated HTTPS directory, for example:
 
 ```text
-https://example.com/CometenIRLAlerts_Relay
+https://example.com/CometenIRLSystem_Relay
 ```
+
+An existing deployed relay directory using the old `CometenIRLAlerts_Relay` name can remain unchanged. Renaming the repository does not require changing a working relay URL.
 
 The relay directory should contain at least:
 
@@ -182,10 +200,10 @@ return [
 ];
 ```
 
-Test:
+Test a fresh deployment at:
 
 ```text
-https://example.com/CometenIRLAlerts_Relay/health.php
+https://example.com/CometenIRLSystem_Relay/health.php
 ```
 
 Expected response: JSON with `ok=true`.
@@ -205,17 +223,21 @@ The heartbeat client also backs off when the server returns 429 and uses `Retry-
 
 ## 6. Configure the BELABOX receiver
 
+Fresh installation:
+
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 cp config.example.json config.json
 nano config.json
 ```
+
+Existing pre-rename installations may use `~/CometenIRLAlerts/receiver` instead.
 
 Minimum relay/receiver fields:
 
 ```json
 {
-  "relay_base_url": "https://example.com/CometenIRLAlerts_Relay",
+  "relay_base_url": "https://example.com/CometenIRLSystem_Relay",
   "receiver_token": "RECEIVER_TOKEN",
   "poll_interval_seconds": 0.75,
   "request_timeout_seconds": 10,
@@ -227,6 +249,8 @@ Minimum relay/receiver fields:
   "default_sound": "test.wav"
 }
 ```
+
+For an existing deployment, keep the current working `relay_base_url` even if its directory still contains the old project name.
 
 Keep any additional audio, remote-control, Browser Audio and LED fields required by the current `config.example.json`.
 
@@ -251,12 +275,14 @@ Recommended format:
 - 16-bit
 - 44.1 or 48 kHz
 
-Test:
+Test from the active checkout directory:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 pw-play sounds/test.wav
 ```
+
+Existing pre-rename installations may use `~/CometenIRLAlerts/receiver` instead.
 
 The keepalive path uses `pw-cat`. Do not add `--raw` unless the installed PipeWire version explicitly supports it.
 
@@ -300,16 +326,20 @@ See [BELABOX Headless Setup](BELABOX_HEADLESS.md) for the tested ROCK 5B+/PipeWi
 Use user-systemd, not the older system-wide service approach:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 bash install-user-service.sh
 ```
 
-This installs/starts:
+Existing pre-rename installations may use `~/CometenIRLAlerts/receiver` instead.
+
+This installs/starts the existing compatibility service names:
 
 ```text
 cometen-irl-alerts.service
 cometen-irl-heartbeat.service
 ```
+
+These runtime names are intentionally retained after the repository rename so existing installations are not broken.
 
 Enable lingering once so user services may survive logout/reboot:
 
@@ -341,12 +371,14 @@ Install dependencies:
 sudo apt install -y xvfb xauth python3-venv
 ```
 
-Install the local browser runtime:
+Install the local browser runtime from the active checkout:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 bash install-browser-runtime.sh
 ```
+
+Existing pre-rename installations may use `~/CometenIRLAlerts/receiver` instead.
 
 The installer deliberately uses a runtime-local temporary directory because `/tmp` can be a small tmpfs on BELABOX even when the main filesystem has plenty of free space.
 
@@ -386,6 +418,8 @@ CometenIRL_SenderToken
 
 `CometenIRL_RelayUrl` is the base relay directory without `/push.php`.
 
+The `CometenIRL_*` global prefix is intentionally retained for compatibility after the repository rename.
+
 Additional globals are used by the admin/watchdog modules. See [Streamer.bot Setup](streamerbot-setup.md).
 
 ## 12. Streamer.bot actions
@@ -411,6 +445,8 @@ CometenIRL_EndAutoStop
 IRLAlertsController
   -> streamerbot/IRLAlertsController.cs
 ```
+
+These action, file and global names are runtime compatibility identifiers and are not renamed as part of the repository branding change.
 
 Compile each C# action in Streamer.bot and configure triggers/permissions as documented in [Streamer.bot Setup](streamerbot-setup.md).
 
@@ -451,7 +487,18 @@ Install/update the GPIO/status-LED component with the repository script document
 
 ## 16. Updating an existing BELABOX installation
 
-Normal receiver update:
+For a fresh post-rename installation:
+
+```bash
+cd ~/CometenIRLSystem
+git pull
+cd receiver
+bash install-user-service.sh
+systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
+```
+
+For an existing pre-rename installation, use its current checkout path instead:
 
 ```bash
 cd ~/CometenIRLAlerts
