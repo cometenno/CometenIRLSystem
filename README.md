@@ -1,133 +1,141 @@
 # Cometen IRL Alerts
 
-Cometen IRL Alerts er hovedmodulen for IRL-varsler, fjernkontroll, status, Browser Audio og BELABOX/OBS-watchdog.
+Cometen IRL Alerts is the central IRL control and return-channel project used with the Cometen BELABOX setup.
 
-## Arkitektur
+It combines:
+
+- alert delivery from Streamer.bot/CometenWebAdmin to BELABOX
+- PHP/MySQL HTTPS relay with lease/acknowledgement
+- local PipeWire/Bluetooth alert playback on ROCK 5B+
+- remote speaker control and expanded status
+- headless Browser Source audio on BELABOX
+- multi-source Browser Audio management
+- receiver heartbeat and diagnostics
+- physical status LEDs
+- BELABOX/SRT ingest watchdog
+- OBS failover and automatic recovery
+- IRL stream start/BRB/end/admin commands
+- optional Channel Point mode switching
+- Twitch URL safety for URL-bearing commands
+
+## Architecture
 
 ```text
 Twitch / YouTube / CometenWebAdmin
         |
         v
-Streamer.bot på streaming-PC
+Streamer.bot on streaming PC
         |
         | HTTPS
         v
-PHP/MySQL-relay på webhotell
+PHP/MySQL relay on web host
         |
         +---------------------------+
         |                           |
-        | alerts / kontroll         | heartbeat/status
+        | alerts / control          | heartbeat/status
         v                           v
 ROCK 5B+ receiver              receiver status
         |
         v
-PipeWire / Bluetooth / lokale WAV-filer
+PipeWire / Bluetooth / local WAV files
 
 Browser Sources
         |
-        +--> Sound Alerts --> OBS hjemme
-        |                \-> Browser Audio [soundalerts] --+
-        +--> Blerp --------> Browser Audio [blerp] --------+--> PipeWire --> Bluetooth
+        +--> Sound Alerts --> OBS on streaming PC
+        |                \-> BELABOX Browser Audio [soundalerts] --+
+        +--> Blerp/other ----> BELABOX Browser Audio [source] ------+--> PipeWire --> Bluetooth
 
-BELABOX Cloud ingest-stats
+BELABOX Cloud/SRT ingest telemetry
         |
         v
-IRLAlertsController
+IRLAlertsController in Streamer.bot
         |
         +--> BELABOX SRT
         +--> IRL - SIGNAL MISTET
 ```
 
-## Bekreftet funksjon
+## Documentation
 
-- HTTPS-sending fra Streamer.bot
-- PHP/MySQL relay med lease og kvittering
-- Python receiver på ROCK 5B+
-- lokal WAV-avspilling via PipeWire/Bluetooth
-- CometenWebAdmin-integrasjon
-- remote control for volum/status/test
-- headless user-systemd-oppsett
-- WPS200/Bluetooth-oppsett
-- LED/statusmodul
-- heartbeat fra ROCK 5B+ til relay
-- heartbeat standardisert til 30 sekunder med 429-backoff
-- receiver offline-grense på 90 sekunder
-- BELABOX Cloud ingest-telemetri som kilde for video-watchdog
-- OBS fallback til `IRL - SIGNAL MISTET`
-- automatisk recovery tilbake til `BELABOX SRT` / tidligere scene
-- live-only gating med `CometenIRL_WatchdogLiveOnly=true`
-- remote-control-kommandoer for status, volum, mute/unmute og alert-test
-- Sound Alerts Browser Source på ROCK 5B+ via lokal Playwright Chromium
-- samtidig Sound Alerts-avspilling i OBS hjemme og på Bluetooth-høyttaleren via BELABOX
+Start here:
 
-## Browser Audio
+- [Documentation Home](docs/README.md)
+- [Installation](docs/INSTALLATION.md)
+- [Architecture](docs/architecture.md)
+- [Module Overview](docs/MODULES.md)
+- [Complete Command Reference](docs/COMMANDS.md)
 
-Den produksjonsverifiserte single-source-kjeden 21. august 2026 var:
+Feature guides:
 
-```text
-Sound Alerts -> OBS hjemme
-Sound Alerts -> BELABOX -> Chromium -> PipeWire -> soundcore Select 4 Go
-```
+- [Browser Audio](docs/BROWSER_AUDIO.md)
+- [Remote Control](docs/REMOTE_CONTROL.md)
+- [OBS IRL Admin Control](docs/OBS_ADMIN_CONTROL.md)
+- [Watchdog and Heartbeat](docs/WATCHDOG_HEARTBEAT.md)
+- [Status LEDs](docs/STATUS_LEDS.md)
+- [Twitch Chat URL Guard](docs/CHAT_URL_GUARD.md)
+- [BELABOX Headless Bluetooth Setup](docs/BELABOX_HEADLESS.md)
+- [BELABOX Stability Notes](docs/BELABOX_STABILITY.md)
+- [Streamer.bot Setup](docs/streamerbot-setup.md)
+- [Receiver Setup](docs/receiver-setup.md)
+- [Relay Setup](docs/relay-setup.md)
+- [CometenWebAdmin Integration](integration/cometenwebadmin/README.md)
 
-Samme test-alert ble hørt begge steder.
+## Main modules
 
-Browser Audio er nå utvidet med multi-source-supervisor. Hver Browser Source får egen Chromium-prosess og kan styres separat. Eksempel:
+### Streamer.bot sender
 
-```text
-!irlaudio status
-!irlaudio add blerp <url>
-!irlaudio blerp off
-!irlaudio blerp on
-!irlaudio remove blerp
-```
+`streamerbot/CometenIRL_Send.cs`
 
-Nye chatbaserte multi-source-funksjoner skal praktisk testgodkjennes før de markeres produksjonsverifisert.
+Sends alert events to the HTTPS relay.
 
-Komplett guide:
+### Remote Control
 
-[`docs/BROWSER_AUDIO_NO.md`](docs/BROWSER_AUDIO_NO.md)
+`streamerbot/CometenIRL_RemoteControl.cs`
 
-## Twitch URL Guard
+Controls BELABOX speaker volume/mute/status/test through the relay and confirmed receiver results.
 
-`streamerbot/Cometen_ChatUrlGuard.cs` kan kobles til Twitch Chat Message-triggeren.
+### Browser Audio Control
 
-- broadcaster/mod/VIP kan poste vanlige lenker
-- URL-er fra andre brukere slettes
-- URL-baserte kommandomeldinger slettes etter at Streamer.bot har mottatt eventet
-- dette dekker blant annet `!sr <url>` og `!irlaudio add <navn> <url>`
+`streamerbot/CometenIRL_BrowserAudioControl.cs`
 
-Guide:
+Controls named headless Browser Sources on BELABOX through `!irlaudio`.
 
-[`docs/CHAT_URL_GUARD_NO.md`](docs/CHAT_URL_GUARD_NO.md)
+### OBS IRL Admin Control
 
-## Watchdog-status
+`streamerbot/CometenIRL_AdminControl.cs`
 
-**IRLAlertsController v9 ble produksjonsverifisert 16. august 2026.**
+Controls Starting Soon, BELABOX SRT, BRB, Ending, stop, scene aliases, Channel Points and persistent response language.
 
-Bekreftet både i offline testmodus og under faktisk OBS-streaming:
+### BELABOX receiver
 
-- `CometenIRL_WatchdogLiveOnly=false` lar watchdog kjøre mens OBS ikke streamer, for testing
-- `CometenIRL_WatchdogLiveOnly=true` blokkerer scenebytte når OBS er offline
-- under faktisk streaming gir `connected=false` / `bitrate=0` fallback til `IRL - SIGNAL MISTET`
-- når BELABOX-ingest kommer tilbake og er stabil, går OBS automatisk tilbake til `BELABOX SRT` / tidligere scene
-- scenebytte bruker `CPH.ObsSetScene()` for både fallback og recovery
-- funksjonen er også verifisert under BELABOX bredbåndsmodus-test
+`receiver/receiver.py` and `receiver/run_receiver.py`
 
-**v10** bygger videre på samme verifiserte watchdog og legger til `CometenIRL_WatchdogArmed`. Når denne er `false`, fortsetter BELABOX-telemetrien å oppdateres, men watchdog får ikke bytte scene. v10/admin-gating skal praktisk testgodkjennes før den markeres produksjonsverifisert.
+Polls the relay, plays local alerts, executes supported remote-control actions and publishes confirmed results.
 
-Ikke kjør NOALBS eller annen automatisk scene-switcher parallelt med `IRLAlertsController`.
+### Browser Audio supervisor
 
-## IRL Admin Control
+`receiver/browser_audio.py`
 
-Admin-kontroll ligger i:
+Runs one headless Chromium process/profile per configured Browser Source and routes audio through PipeWire/Bluetooth.
+
+### Ingest watchdog
+
+`streamerbot/IRLAlertsController.cs`
+
+Uses BELABOX/SRT ingest telemetry to perform automatic OBS fallback/recovery.
+
+## IRL chat commands
+
+Main command groups include:
 
 ```text
-streamerbot/CometenIRL_AdminControl.cs
-```
+!irlstatus
+!alerttest
+!volum 0-100
+!volup
+!voldown
+!mute
+!unmute
 
-Planlagte/implementerte admin-kommandoer omfatter blant annet:
-
-```text
 !irlstart
 !irlgo
 !irlbrb
@@ -136,101 +144,82 @@ Planlagte/implementerte admin-kommandoer omfatter blant annet:
 !irlstop
 !irlscene <alias>
 !irlpoints on|off
+!irllang no|en
+
+!irlaudio status
+!irlaudio on|off|restart
+!irlaudio add <name> <url>
+!irlaudio remove <name>
+!irlaudio <name> on|off|restart|status
 ```
 
-Detaljer:
+See [Complete Command Reference](docs/COMMANDS.md).
 
-[`docs/ADMIN_CONTROL_NO.md`](docs/ADMIN_CONTROL_NO.md)
+## Verified functionality
 
-## Installer / oppdater
+The real BELABOX/streaming setup has production-tested or directly exercised:
 
-Kanonisk installasjonsguide:
+- HTTPS sender -> relay -> receiver path
+- lease/acknowledgement and confirmed control results
+- local PipeWire/Bluetooth audio
+- receiver heartbeat
+- status/volume/mute/test remote control
+- Sound Alerts Browser Audio on ROCK 5B+
+- simultaneous Sound Alerts playback in OBS and on the BELABOX Bluetooth speaker
+- Browser Audio master status/on/off command path
+- adding a second named Browser Audio source through Twitch chat
+- automatic deletion of the private URL-bearing Browser Audio add message
+- per-source Browser Audio on/off command path
+- BELABOX ingest signal-loss fallback and stable recovery
+- live-only watchdog gating
+- IRL Starting Soon / live / BRB / Ending workflow
+- automatic Ending stop and IRL mode lifecycle
+- persistent NO/EN response language
+- optional Channel Point group switching
+- physical status LED/video-probe integration
 
-[`docs/INSTALLASJON_NO.md`](docs/INSTALLASJON_NO.md)
+Independent audio playback from each newly added third-party Browser Source should still be validated provider by provider.
 
-Receiver + heartbeat installeres som user services med:
+## Update BELABOX
+
+Typical receiver update:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLAlerts
+git pull
+cd receiver
 bash install-user-service.sh
-sudo loginctl enable-linger "$USER"
+systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
 ```
 
-GPIO/status-LED og root video-probe installeres/oppdateres med:
+If Browser Audio changed:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
-bash install-gpio-leds.sh
+systemctl --user restart cometen-irl-browser-audio.service
 ```
 
-Browser Audio installeres som egen user service innen samme prosjekt. Se `docs/BROWSER_AUDIO_NO.md`.
+Relay PHP files are hosted separately and must be uploaded to the web host when they change; a BELABOX `git pull` does not update the web host.
 
-## Viktige guider
+## Security
 
-- [`docs/INSTALLASJON_NO.md`](docs/INSTALLASJON_NO.md) - komplett installasjon
-- [`docs/WATCHDOG_HEARTBEAT_NO.md`](docs/WATCHDOG_HEARTBEAT_NO.md) - watchdog, heartbeat, 429 og USB-funn
-- [`docs/ADMIN_CONTROL_NO.md`](docs/ADMIN_CONTROL_NO.md) - IRL admin chat, OBS start/stopp, scene og Channel Points
-- [`docs/BELABOX_ROCK5B_HEADLESS_NO.md`](docs/BELABOX_ROCK5B_HEADLESS_NO.md) - headless ROCK 5B+/Bluetooth/PipeWire
-- [`docs/REMOTE_CONTROL_NO.md`](docs/REMOTE_CONTROL_NO.md) - remote control og `!irlaudio`
-- [`docs/BROWSER_AUDIO_NO.md`](docs/BROWSER_AUDIO_NO.md) - Browser Source til BELABOX/Bluetooth
-- [`docs/CHAT_URL_GUARD_NO.md`](docs/CHAT_URL_GUARD_NO.md) - automatisk sletting av URL-er i Twitch-chat
-- [`docs/STATUS_LEDS_NO.md`](docs/STATUS_LEDS_NO.md) - LED-status
-- [`docs/streamerbot-setup.md`](docs/streamerbot-setup.md) - Streamer.bot
-- [`docs/relay-setup.md`](docs/relay-setup.md) - webrelay
-- [`docs/receiver-setup.md`](docs/receiver-setup.md) - receiver
-
-## Heartbeat
-
-Standard i `receiver/config.json`:
-
-```json
-"heartbeat_receiver_id": "belabox",
-"heartbeat_interval_seconds": 30,
-"heartbeat_timeout_seconds": 5
-```
-
-Relay bruker:
-
-```php
-'receiver_offline_seconds' => 90,
-```
-
-1 sekund heartbeat ble forkastet fordi webhotellet/nginx svarte med `HTTP 429 Too Many Requests`.
-
-## LED-status
-
-Bekreftet prinsipp:
-
-```text
-grønn = system/online
-blå   = Bluetooth/WPS200
-gul   = video-input finnes
-rød   = BELABOX encoder/output kjører
-```
-
-Gul og rød er separate. `Stop` i BELABOX admin kan derfor slå av rød mens gul fortsatt lyser dersom videokilden fortsatt finnes.
-
-## Kjent hardware-spor
-
-Nattest 16. august 2026 viste reelle USB-videobortfall fra den testede Elgato Facecam-kjeden, blant annet `uvcvideo -71`, URB-feil og eksplisitt USB disconnect. Dette behandles som kamera/kabel/USB-hardware-spor og er separat fra SRT-watchdog-logikken.
-
-## Sikkerhet
-
-Aldri commit:
+Never commit:
 
 ```text
 relay/config.php
 receiver/config.json
 ```
 
-Aldri hardkod eller publiser:
+Never publish:
 
-- sender-token
-- receiver-token
-- databasepassord
-- BELABOX stream-ID
-- Browser Source-URL/token
+- sender token
+- receiver token
+- database password
+- BELABOX stream ID
+- private Browser Source URLs/tokens
 
-## Designregel
+## Design rule
 
-Alertlevering, remote control, Browser Audio, URL-guard, heartbeat, LED-status, BELABOX/SRT-watchdog, OBS-failover, IRL admin-kontroll og videre diagnostikk skal samles og koordineres i dette prosjektet.
+Keep IRL-specific alerting, remote control, Browser Audio, heartbeat, physical status, BELABOX/SRT watchdog and OBS failover coordinated inside this project.
+
+Do not run another automatic scene switcher such as NOALBS in parallel with `IRLAlertsController` unless the scene-authority model is deliberately redesigned and retested.
