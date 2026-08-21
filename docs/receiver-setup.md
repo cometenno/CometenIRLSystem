@@ -21,13 +21,33 @@ receiver/config.json
 
 `config.json` is gitignored and must never be committed.
 
+## Repository path
+
+Fresh installations use:
+
+```text
+~/CometenIRLSystem
+```
+
+Existing installations created before the repository rename may still use:
+
+```text
+~/CometenIRLAlerts
+```
+
+Keep the existing path unless you deliberately migrate and reinstall services that contain absolute paths.
+
 ## Create local configuration
 
+Fresh installation:
+
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 cp config.example.json config.json
 nano config.json
 ```
+
+Use `~/CometenIRLAlerts/receiver` instead on an existing pre-rename checkout.
 
 At minimum configure:
 
@@ -93,19 +113,23 @@ Do not add unsupported options such as `--raw` without testing against the PipeW
 
 ## Install user services
 
-Use the project installer:
+Use the project installer from the active checkout:
 
 ```bash
-cd ~/CometenIRLAlerts/receiver
+cd ~/CometenIRLSystem/receiver
 bash install-user-service.sh
 ```
 
-This installs/updates:
+Existing pre-rename installations may use `~/CometenIRLAlerts/receiver` instead.
+
+This installs/updates the compatibility service names:
 
 ```text
 cometen-irl-alerts.service
 cometen-irl-heartbeat.service
 ```
+
+These service names are intentionally retained after the project rename.
 
 Enable lingering once:
 
@@ -169,6 +193,19 @@ It launches headless Chromium processes for configured Browser Sources and route
 See [Browser Audio](BROWSER_AUDIO.md).
 
 ## Update workflow
+
+Fresh post-rename checkout:
+
+```bash
+cd ~/CometenIRLSystem
+git pull
+cd receiver
+bash install-user-service.sh
+systemctl --user restart cometen-irl-alerts.service
+systemctl --user restart cometen-irl-heartbeat.service
+```
+
+Existing pre-rename checkout:
 
 ```bash
 cd ~/CometenIRLAlerts
