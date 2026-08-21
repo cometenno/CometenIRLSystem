@@ -4,9 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$WikiUrl = "https://github.com/la1ona/CometenIRLAlerts.wiki.git"
+$WikiUrl = "https://github.com/la1ona/CometenIRLSystem.wiki.git"
 $WikiSource = Join-Path $RepoRoot "wiki"
-$TempWiki = Join-Path $env:TEMP "CometenIRLAlerts.wiki.publish"
+$TempWiki = Join-Path $env:TEMP "CometenIRLSystem.wiki.publish"
 
 if (-not (Test-Path $WikiSource)) {
     throw "Wiki source directory not found: $WikiSource"
@@ -36,7 +36,7 @@ try {
         exit 0
     }
 
-    git commit -m "Update Cometen IRL Alerts Wiki"
+    git commit -m "Update Cometen IRL System Wiki"
     if ($LASTEXITCODE -ne 0) {
         throw "Wiki commit failed."
     }
