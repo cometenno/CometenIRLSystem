@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 return [
     'database' => [
-        'dsn' => 'mysql:host=localhost;dbname=cometen_irl_alerts;charset=utf8mb4',
+        'dsn' => 'mysql:host=localhost;dbname=cometen_irl_system;charset=utf8mb4',
         'username' => 'CHANGE_ME',
         'password' => 'CHANGE_ME',
     ],
