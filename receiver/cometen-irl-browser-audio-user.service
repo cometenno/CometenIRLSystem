@@ -1,0 +1,13 @@
+[Unit]
+Description=Cometen IRL Browser Audio
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@RECEIVER_DIR@
+ExecStart=/usr/bin/python3 @RECEIVER_DIR@/browser_audio.py --config @RECEIVER_DIR@/config.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
