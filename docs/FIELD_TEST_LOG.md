@@ -1,6 +1,6 @@
 # Field Test Log
 
-This file records real-world Cometen IRL Alerts / BELABOX observations where the cause is known or strongly verified.
+This file records real-world Cometen IRL System / BELABOX observations where the cause is known or strongly verified.
 
 The goal is to keep operational incidents separate from design documentation so future troubleshooting can compare symptoms against previously confirmed causes.
 
