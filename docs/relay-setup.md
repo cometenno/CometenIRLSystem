@@ -105,13 +105,15 @@ return [
 
 ## Health test
 
-Open:
+For a fresh deployment, a directory name matching the current project branding can be used:
 
 ```text
-https://example.com/CometenIRLAlerts_Relay/health.php
+https://example.com/CometenIRLSystem_Relay/health.php
 ```
 
 Expected result: JSON reporting `ok=true`.
+
+An existing production relay using a legacy path such as `CometenIRLAlerts_Relay` does **not** need to be renamed. Keep the working relay URL in `receiver/config.json` and Streamer.bot globals unless you deliberately migrate the web-host path.
 
 ## Event lifecycle
 
