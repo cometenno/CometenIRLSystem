@@ -1,6 +1,6 @@
 # IRL chat command reference
 
-This is the complete user-facing chat command reference for Cometen IRL Alerts.
+This is the complete user-facing chat command reference for Cometen IRL System.
 
 Permissions depend on the command group. Keep command permissions in Streamer.bot aligned with the code-level checks described below.
 
