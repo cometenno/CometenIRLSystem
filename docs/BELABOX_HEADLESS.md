@@ -2,6 +2,10 @@
 
 This page documents the tested headless Bluetooth/audio setup used on the Cometen BELABOX with Radxa ROCK 5B+.
 
+![Prototype BELABOX I/O panel](images/belabox-prototype-io-panel.jpg)
+
+*Prototype top I/O panel showing the current physical port and antenna layout. Final enclosure photos will replace this image after the remaining hardware is installed.*
+
 Goal:
 
 ```text
@@ -108,10 +112,10 @@ The files existed under `/lib/firmware/rtl_bt/`, so permanent symlinks were crea
 
 ```bash
 sudo ln -sf /lib/firmware/rtl_bt/rtl8852bu_fw.bin \
-  /lib/firmware/rtl8852bu_fw
+  /lib/firmware/rtl_bt/rtl8852bu_fw
 
 sudo ln -sf /lib/firmware/rtl_bt/rtl8852bu_config.bin \
-  /lib/firmware/rtl8852bu_config
+  /lib/firmware/rtl_bt/rtl8852bu_config
 ```
 
 `rtl8852bu_config.bin` may itself already be a symlink to `rtl8761bu_config.bin`; that was normal on the tested image.
