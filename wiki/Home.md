@@ -2,6 +2,10 @@
 
 Cometen IRL System is the coordinated IRL control, monitoring and return-channel system used with the Cometen BELABOX setup.
 
+![Current Cometen BELABOX prototype](https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-prototype-overview.jpg)
+
+*Current Cometen BELABOX prototype. This photo will be replaced by final enclosure photos after the remaining hardware is installed.*
+
 It covers alert delivery, BELABOX-side audio, Browser Source audio, receiver health, remote control, OBS IRL workflow, SRT failover/recovery, physical status LEDs, Twitch URL safety and CometenWebAdmin integration.
 
 ## Quick navigation
@@ -9,6 +13,7 @@ It covers alert delivery, BELABOX-side audio, Browser Source audio, receiver hea
 - [[Installation]]
 - [[Module-Overview]]
 - [[Commands]]
+- [[Status-LEDs]]
 - [[Security]]
 - [[Troubleshooting]]
 
@@ -54,6 +59,7 @@ The detailed maintained documentation also lives in the main repository under `d
 - Architecture: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/architecture.md
 - Module overview: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/MODULES.md
 - Commands: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/COMMANDS.md
+- Status LEDs: https://github.com/la1ona/CometenIRLSystem/blob/main/docs/STATUS_LEDS.md
 
 ## Repository rename compatibility
 
