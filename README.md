@@ -4,9 +4,9 @@ Cometen IRL System is the central IRL control, monitoring and return-channel pro
 
 > **Unofficial project:** Cometen IRL System is not an official BELABOX project and is not developed, maintained, endorsed or supported by BELABOX. It is an independent personal add-on/modification project created by Cometen for his own BELABOX-based IRL streaming setup.
 
-![Current Cometen BELABOX prototype](docs/images/belabox-prototype-overview.jpg)
+![Current Cometen BELABOX prototype](docs/images/belabox-board-overview.jpg)
 
-*Current Cometen BELABOX prototype. This photo will be replaced by final enclosure photos after the remaining hardware is installed.*
+*Current Cometen BELABOX prototype showing the ROCK 5B+ board and internal hardware. This photo will be replaced by final enclosure photos after the remaining hardware is installed.*
 
 It combines:
 
