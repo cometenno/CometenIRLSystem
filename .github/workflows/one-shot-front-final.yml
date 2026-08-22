@@ -1,10 +1,9 @@
 name: One-shot verified front image
 
 on:
-  push:
+  pull_request:
     branches: [main]
-    paths:
-      - '.github/workflows/one-shot-front-final.yml'
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
@@ -15,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Rebuild and verify image
         shell: bash
@@ -28,7 +29,7 @@ jobs:
           assert d[:4] == b'RIFF', d[:12]
           assert d[8:12] == b'WEBP', d[:12]
           assert len(d) == 55680
-          print('WEBP header and size verified')
+          print('WEBP header, size and SHA256 verified')
           PY
 
       - name: Point README and Wiki to verified image
@@ -36,19 +37,16 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('README.md')
-          s = p.read_text()
-          s = s.replace('docs/images/belabox-board-overview.webp', 'docs/images/cometen-belabox-board-final.webp')
+          s = p.read_text().replace('docs/images/belabox-board-overview.webp', 'docs/images/cometen-belabox-board-final.webp')
           p.write_text(s)
 
           p = Path('wiki/Home.md')
-          s = p.read_text()
-          s = s.replace('https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-board-overview.webp', 'https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/cometen-belabox-board-final.webp')
+          s = p.read_text().replace('https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-board-overview.webp', 'https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/cometen-belabox-board-final.webp')
           p.write_text(s)
           PY
 
-      - name: Clean temporary files and commit
+      - name: Clean temporary files and commit to main
         shell: bash
         run: |
           rm -rf .tmp/front-final .tmp/front-image .tmp/front320
@@ -57,4 +55,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Install verified README hardware photo"
-          git push
+          git push origin HEAD:main
