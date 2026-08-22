@@ -4,6 +4,10 @@ This page documents stability-oriented changes and diagnostic practices for the 
 
 ## 1. Fan hysteresis
 
+![Prototype enclosure cooling fan](images/belabox-prototype-cooling.jpg)
+
+*Prototype enclosure cooling arrangement. Final enclosure photos will replace this image after the remaining hardware is installed.*
+
 The existing fan curve is retained:
 
 ```text
@@ -122,23 +126,23 @@ Useful live kernel filter:
 sudo journalctl -kf -n 0 | grep -Ei 'uvc|usb|video|v4l2|xhci|disconnect|reset|error'
 ```
 
-## LED interpretation during camera failures
+## LED interpretation during video-source failures
 
 The current LED design separates source presence from encoder state:
 
-- yellow - local video source/input
+- yellow - current local/network video source/input
 - red - BELABOX encoder/output
 
-This prevents an intentional BELABOX Stop from looking like a missing camera.
+This prevents an intentional BELABOX Stop from looking like a missing source.
 
-Expected intentional Stop state with camera still attached:
+Expected intentional Stop state while the configured camera or RTMP publisher remains available:
 
 ```text
 Yellow: solid
 Red: off
 ```
 
-A real video-pipeline failure while the encoder is running should produce the configured yellow/red fault indication.
+A real video-pipeline failure, USB/V4L2 failure or RTMP publisher loss while the encoder is running should produce the configured yellow/red fault indication.
 
 See [Status LEDs](STATUS_LEDS.md).
 
