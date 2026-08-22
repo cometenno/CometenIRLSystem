@@ -1,0 +1,60 @@
+name: One-shot verified front image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-front-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  install-image:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild and verify image
+        shell: bash
+        run: |
+          cat .tmp/front-final/00.b64 .tmp/front-final/01.b64 .tmp/front-final/02.b64 .tmp/front-final/03.b64 .tmp/front-final/04.b64 | base64 -d > docs/images/cometen-belabox-board-final.webp
+          test "$(stat -c%s docs/images/cometen-belabox-board-final.webp)" -eq 55680
+          echo "63ddc0ce6ab4849094b7ef64a2f2818070367c1f2dc03daef2a0d1de9cfc3890  docs/images/cometen-belabox-board-final.webp" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          d = Path('docs/images/cometen-belabox-board-final.webp').read_bytes()
+          assert d[:4] == b'RIFF', d[:12]
+          assert d[8:12] == b'WEBP', d[:12]
+          assert len(d) == 55680
+          print('WEBP header and size verified')
+          PY
+
+      - name: Point README and Wiki to verified image
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('README.md')
+          s = p.read_text()
+          s = s.replace('docs/images/belabox-board-overview.webp', 'docs/images/cometen-belabox-board-final.webp')
+          p.write_text(s)
+
+          p = Path('wiki/Home.md')
+          s = p.read_text()
+          s = s.replace('https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-board-overview.webp', 'https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/cometen-belabox-board-final.webp')
+          p.write_text(s)
+          PY
+
+      - name: Clean temporary files and commit
+        shell: bash
+        run: |
+          rm -rf .tmp/front-final .tmp/front-image .tmp/front320
+          rm -f .github/workflows/one-shot-front-final.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Install verified README hardware photo"
+          git push
