@@ -1,0 +1,58 @@
+name: One-shot LED photo docs update
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-led-photo-docs.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update-docs:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Insert correct LED wiring photo
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('docs/STATUS_LEDS.md')
+          s = p.read_text()
+          old = "The latest close-up with the black 5-wire connector at the ROCK 5B+ GPIO header shows the **status-LED wiring**. The separate earlier close-up showing wires beside the heatsink/cooler is the **fan wiring** and should not be used as the LED wiring illustration."
+          new = """![Prototype status-LED GPIO wiring](images/belabox-prototype-gpio-wiring.jpg)
+
+          *Prototype status-LED wiring at the ROCK 5B+ GPIO header.*
+
+          The black 5-wire connector shown here is the **status-LED harness**. The separate earlier close-up beside the heatsink/cooler shows the **fan wiring** and is not used as the LED wiring illustration."""
+          if old not in s:
+              raise SystemExit('Expected STATUS_LEDS paragraph not found')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('wiki/Status-LEDs.md')
+          s = p.read_text()
+          start = s.index('## GPIO wiring')
+          end = s.index('## Detailed documentation')
+          block = """## GPIO wiring
+
+          ![Prototype status-LED GPIO wiring](https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-prototype-gpio-wiring.jpg)
+
+          *Prototype status-LED wiring at the ROCK 5B+ GPIO header. The black 5-wire connector is the LED harness.*
+
+          """
+          p.write_text(s[:start] + block + s[end:])
+          PY
+
+      - name: Commit documentation update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/STATUS_LEDS.md wiki/Status-LEDs.md
+          git commit -m "Show correct LED harness photo in documentation"
+          git push
