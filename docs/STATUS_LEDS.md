@@ -2,6 +2,10 @@
 
 This module drives four 5 mm status LEDs from the Radxa ROCK 5B+ GPIO header.
 
+![Prototype status LED panel](images/belabox-prototype-led-panel.jpg)
+
+*Prototype status-LED panel on the current Cometen BELABOX enclosure. Final enclosure photos will replace this image after the hardware build is complete.*
+
 The normal alert receiver and LED controller run as a user-systemd service. A small root system service is used only for video-pipeline probing because BELABOX `belacoder` runs as root and a normal user cannot always inspect `/proc/<pid>/fd`.
 
 ## Hardware
@@ -30,6 +34,10 @@ PIN_36 ---- 680R ---->|----+
 PIN_38 ---- 680R ---->|----+---- PIN_34 GND
 PIN_40 ---- 680R ---->|----+
 ```
+
+![Prototype GPIO LED wiring](images/belabox-prototype-gpio-wiring.jpg)
+
+*Prototype GPIO/status-LED wiring on the ROCK 5B+ header.*
 
 LED anode/long leg goes toward GPIO through the resistor. Cathode/short leg/flat side goes to common ground.
 
@@ -92,14 +100,6 @@ Typical RTMP configuration fields are:
 "camera_stream": "live"
 ```
 
-A healthy RTMP source may therefore be reported as a logical source such as:
-
-```text
-rtmp:publish/live
-```
-
-rather than as a `/dev/...` device path.
-
 ### Red - BELABOX ENCODER / OUTPUT
 
 - solid - `belacoder` is running and video input/pipeline is healthy
@@ -118,7 +118,7 @@ The solution is:
 ```text
 cometen-irl-video-probe.service   root system service
         |
-        | reads /proc + device paths + RTMP state only
+        | reads /proc + device paths only
         v
 /run/cometen-irl-video-status.json
         |
@@ -129,7 +129,7 @@ cometen-irl-alerts.service        normal user service
 Yellow/red LEDs + !irlstatus
 ```
 
-The root probe never opens the camera device itself. It only observes existing file descriptors, source paths and RTMP publisher state, so it does not compete with GStreamer for the input.
+The root probe never opens the camera device itself. It only observes existing file descriptors and source paths, so it does not compete with GStreamer for the V4L2 device.
 
 Check the probe file:
 
@@ -137,7 +137,7 @@ Check the probe file:
 cat /run/cometen-irl-video-status.json
 ```
 
-Example while encoder and a local device pipeline are active:
+Example while encoder and pipeline are active:
 
 ```json
 {
@@ -149,28 +149,14 @@ Example while encoder and a local device pipeline are active:
 }
 ```
 
-Example while an RTMP pipeline is active:
-
-```json
-{
-  "encoder_running": true,
-  "source_present": true,
-  "pipeline_source": "rtmp",
-  "pipeline_active": true,
-  "active": true,
-  "device": "rtmp:publish/live"
-}
-```
-
 Meaning:
 
-- `source_present` - current video source exists
-- `pipeline_source` - detected active source family such as `local`, `rtmp`, `unknown` or `stopped`
-- `pipeline_active` - encoder pipeline has a valid active source
+- `source_present` - local/network video source is available
+- `pipeline_active` - encoder pipeline has the active video source
 - `encoder_running` - `belacoder` is running
 - `active` - effective yellow-LED input state
 
-Example with encoder intentionally stopped but a local camera still present:
+Example with encoder intentionally stopped but camera still present:
 
 ```json
 {
@@ -266,7 +252,7 @@ Relevant local `receiver/config.json` section:
 }
 ```
 
-Adjust the sink match and camera/RTMP settings to the actual installation. `WPS200` above is only an example value for a Bluetooth sink/watchdog. Do not commit the local config.
+Adjust the sink match and camera/RTMP fields to the actual installation. Do not commit the local config.
 
 ## Test only the LEDs
 
@@ -287,10 +273,10 @@ green -> blue -> yellow -> red -> all
 
 ## Video/encoder test sequence
 
-1. Local camera connected or RTMP publisher active + BELABOX running -> yellow solid, red solid.
+1. Camera/RTMP source available + BELABOX running -> yellow solid, red solid.
 2. Press Stop in BELABOX while the source remains available -> yellow remains solid, red turns off.
 3. Start BELABOX -> red becomes solid again when pipeline is active.
-4. A real V4L2/GStreamer drop, USB disconnect or RTMP publisher loss while encoder is running should produce the configured yellow/red fault pattern.
+4. A real V4L2/GStreamer, USB or RTMP publisher drop while encoder is running should produce the configured yellow/red fault pattern.
 
 Watch:
 
