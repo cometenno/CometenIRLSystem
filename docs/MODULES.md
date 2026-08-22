@@ -153,15 +153,31 @@ Purpose:
 
 Run it on a separate Streamer.bot queue from the watchdog.
 
-## 10. Status LEDs
+## 10. Status LEDs and video probe
 
 **Runs on:** ROCK 5B+/BELABOX  
-**Primary receiver status/LED module:** `receiver/status_leds.py`
+**Primary files:** `receiver/status_leds.py`, `receiver/video_signal_probe.py`
 
 Purpose:
 
 - expose physical box state without opening a terminal
-- indicate system/online state, Bluetooth/audio state, video-input state and encoder/output state
+- green - BELABOX online / internet connectivity; solid also confirms the configured relay is reachable
+- blue - configured Bluetooth audio-device state, independent of speaker model
+- yellow - current video-input availability
+- red - BELABOX encoder/output state
+- distinguish local device inputs from RTMP network input
+
+Supported local device paths include:
+
+```text
+/dev/usb_capture
+/dev/hdmirx
+/dev/hdmi_capture
+```
+
+RTMP input is detected separately from device files. The root video probe can use the configured nginx-rtmp status endpoint and stream name, fall back to detecting an external established publisher on TCP port `1935`, and inspect the current BELABOX pipeline for `rtmpsrc`.
+
+This means RTMP publisher loss is treated as video-input loss without incorrectly classifying it as a USB/V4L2 device failure.
 
 See [Status LEDs](STATUS_LEDS.md).
 
@@ -215,4 +231,5 @@ BELABOX / ROCK 5B+
   Browser Audio Chromium processes
   PipeWire/Bluetooth routing
   status LEDs
+  local-device / RTMP video probe
 ```
