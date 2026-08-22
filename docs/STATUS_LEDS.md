@@ -35,7 +35,7 @@ PIN_38 ---- 680R ---->|----+---- PIN_34 GND
 PIN_40 ---- 680R ---->|----+
 ```
 
-The current close-up photo showing a hand holding wires near the heatsink is the **fan wiring**, not the status-LED harness, so it is intentionally not used as the GPIO/status-LED wiring illustration. A dedicated status-LED GPIO photo will be added with the final enclosure photo set.
+The latest close-up with the black 5-wire connector at the ROCK 5B+ GPIO header shows the **status-LED wiring**. The separate earlier close-up showing wires beside the heatsink/cooler is the **fan wiring** and should not be used as the LED wiring illustration.
 
 LED anode/long leg goes toward GPIO through the resistor. Cathode/short leg/flat side goes to common ground.
 
