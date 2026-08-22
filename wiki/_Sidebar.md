@@ -4,6 +4,7 @@
 - [[Installation]]
 - [[Module-Overview]]
 - [[Commands]]
+- [[Status-LEDs]]
 - [[Security]]
 - [[Troubleshooting]]
 
