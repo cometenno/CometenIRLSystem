@@ -1,0 +1,45 @@
+name: One-shot front image repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-front-image.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild verified board photo
+        shell: bash
+        run: |
+          cat .tmp/front320/*.b64 | tr -d '\n\r' | base64 -d > docs/images/belabox-board-overview.webp
+          test -s docs/images/belabox-board-overview.webp
+          file docs/images/belabox-board-overview.webp
+
+      - name: Point README and Wiki to repaired photo
+        shell: python
+        run: |
+          from pathlib import Path
+          for name in ('README.md', 'wiki/Home.md'):
+              p = Path(name)
+              s = p.read_text()
+              s = s.replace('docs/images/belabox-board-overview.jpg', 'docs/images/belabox-board-overview.webp')
+              s = s.replace('https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-board-overview.jpg', 'https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-board-overview.webp')
+              p.write_text(s)
+
+      - name: Commit repaired image and clean temporary files
+        shell: bash
+        run: |
+          rm -rf .tmp/front320 .tmp/front-image
+          rm -f .github/workflows/one-shot-front-image.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Repair README board photo'
+          git push
