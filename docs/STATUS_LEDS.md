@@ -37,40 +37,42 @@ LED anode/long leg goes toward GPIO through the resistor. Cathode/short leg/flat
 
 ### Green - ONLINE / INTERNET
 
-- slow blink - system is starting or internet/relay connectivity has not yet been established
-- solid - BELABOX is online and connected to the internet; the relay is reachable
+- slow blink - internet/relay connectivity has not yet been established
+- solid - BELABOX is online and connected to the internet; relay is reachable
 - fast blink - internet/relay connectivity was lost after the system had been online
 - off - box or `cometen-irl-alerts.service` receiver service is off
 
 ### Blue - BLUETOOTH AUDIO
 
 - solid - the configured Bluetooth audio device exists as a PipeWire `Audio/Sink`
-- slow blink - the configured Bluetooth audio sink is missing but the reconnect/watchdog service is active
-- fast blink - the configured Bluetooth audio sink is missing and the reconnect/watchdog service is also inactive
+- slow blink - the configured Bluetooth audio sink is missing but its Bluetooth/reconnect watchdog service is active
+- fast blink - the configured Bluetooth audio sink is missing and its Bluetooth/reconnect watchdog service is also inactive
 
-The blue LED represents the configured Bluetooth audio output, not a specific speaker model. The actual device/sink is selected through the local receiver configuration.
+The LED is not tied to one speaker model. `WPS200`, Soundcore or another compatible Bluetooth speaker may be used depending on the local configuration.
 
 ### Yellow - VIDEO INPUT
 
 Yellow and red are intentionally separate.
 
-Yellow means that the local video source/input is available, even when the BELABOX encoder has intentionally been stopped.
+Yellow means that the current local/network video source is available, even when the BELABOX encoder has intentionally been stopped.
 
 Rules:
 
-- solid - video source exists while encoder is stopped
-- solid - encoder is running and pipeline actually has the video device open
-- fast blink - encoder is running but the video device is not active in the pipeline, for example during V4L2/GStreamer failure/restart
-- off - no known local video source is available
+- solid - a supported video source is available while encoder is stopped
+- solid - encoder is running and the active input pipeline has a valid source
+- fast blink - encoder is running but the configured/active video source is not available, for example during V4L2/GStreamer failure, USB disconnect or RTMP publisher loss
+- off - no supported video source is currently available
 
-Expected state after pressing **Stop** in BELABOX while the camera remains connected:
+Expected state after pressing **Stop** in BELABOX while the source remains available:
 
 ```text
 Yellow: SOLID - video input still exists
 Red:    OFF   - belacoder/encoder is stopped
 ```
 
-Known source paths include:
+Supported source types include local device inputs and RTMP.
+
+Local device paths include:
 
 ```text
 /dev/usb_capture
@@ -79,6 +81,24 @@ Known source paths include:
 ```
 
 The configured `camera_device` is checked first and symlinks are resolved to the real video device.
+
+RTMP input is detected separately from device files. The probe first checks the configured nginx-rtmp status endpoint and stream name, and can fall back to detecting an external established publisher on TCP port `1935`. The currently generated BELABOX pipeline is also inspected for `rtmpsrc` so RTMP and local V4L2 inputs are handled as separate source types.
+
+Typical RTMP configuration fields are:
+
+```json
+"camera_status_url": "http://127.0.0.1/stat",
+"camera_app": "publish",
+"camera_stream": "live"
+```
+
+A healthy RTMP source may therefore be reported as a logical source such as:
+
+```text
+rtmp:publish/live
+```
+
+rather than as a `/dev/...` device path.
 
 ### Red - BELABOX ENCODER / OUTPUT
 
@@ -98,7 +118,7 @@ The solution is:
 ```text
 cometen-irl-video-probe.service   root system service
         |
-        | reads /proc + device paths only
+        | reads /proc + device paths + RTMP state only
         v
 /run/cometen-irl-video-status.json
         |
@@ -109,7 +129,7 @@ cometen-irl-alerts.service        normal user service
 Yellow/red LEDs + !irlstatus
 ```
 
-The root probe never opens the camera device itself. It only observes existing file descriptors and source paths, so it does not compete with GStreamer for the V4L2 device.
+The root probe never opens the camera device itself. It only observes existing file descriptors, source paths and RTMP publisher state, so it does not compete with GStreamer for the input.
 
 Check the probe file:
 
@@ -117,7 +137,7 @@ Check the probe file:
 cat /run/cometen-irl-video-status.json
 ```
 
-Example while encoder and pipeline are active:
+Example while encoder and a local device pipeline are active:
 
 ```json
 {
@@ -129,14 +149,28 @@ Example while encoder and pipeline are active:
 }
 ```
 
+Example while an RTMP pipeline is active:
+
+```json
+{
+  "encoder_running": true,
+  "source_present": true,
+  "pipeline_source": "rtmp",
+  "pipeline_active": true,
+  "active": true,
+  "device": "rtmp:publish/live"
+}
+```
+
 Meaning:
 
-- `source_present` - local video source/device exists
-- `pipeline_active` - encoder pipeline has the video device open
+- `source_present` - current video source exists
+- `pipeline_source` - detected active source family such as `local`, `rtmp`, `unknown` or `stopped`
+- `pipeline_active` - encoder pipeline has a valid active source
 - `encoder_running` - `belacoder` is running
 - `active` - effective yellow-LED input state
 
-Example with encoder intentionally stopped but camera still present:
+Example with encoder intentionally stopped but a local camera still present:
 
 ```json
 {
@@ -223,13 +257,16 @@ Relevant local `receiver/config.json` section:
   "bluetooth_sink_match": "WPS200",
   "bluetooth_watchdog_service": "cometen-wps200.service",
   "camera_device": "/dev/usb_capture",
+  "camera_status_url": "http://127.0.0.1/stat",
+  "camera_app": "publish",
+  "camera_stream": "live",
   "live_process": "belacoder",
   "video_probe_seconds": 0.5,
   "video_probe_stale_seconds": 3.0
 }
 ```
 
-`bluetooth_sink_match` is installation-specific. `WPS200` above is only an example from the current local setup; another Bluetooth audio device can be configured instead. Adjust the sink match and camera path to the actual installation. Do not commit the local config.
+Adjust the sink match and camera/RTMP settings to the actual installation. `WPS200` above is only an example value for a Bluetooth sink/watchdog. Do not commit the local config.
 
 ## Test only the LEDs
 
@@ -250,10 +287,10 @@ green -> blue -> yellow -> red -> all
 
 ## Video/encoder test sequence
 
-1. Camera connected + BELABOX running -> yellow solid, red solid.
-2. Press Stop in BELABOX -> yellow remains solid, red turns off.
+1. Local camera connected or RTMP publisher active + BELABOX running -> yellow solid, red solid.
+2. Press Stop in BELABOX while the source remains available -> yellow remains solid, red turns off.
 3. Start BELABOX -> red becomes solid again when pipeline is active.
-4. A real V4L2/GStreamer drop while encoder is running should produce the configured yellow/red fault pattern.
+4. A real V4L2/GStreamer drop, USB disconnect or RTMP publisher loss while encoder is running should produce the configured yellow/red fault pattern.
 
 Watch:
 
