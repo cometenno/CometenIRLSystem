@@ -35,9 +35,7 @@ PIN_38 ---- 680R ---->|----+---- PIN_34 GND
 PIN_40 ---- 680R ---->|----+
 ```
 
-![Prototype GPIO LED wiring](images/belabox-prototype-gpio-wiring.jpg)
-
-*Prototype GPIO/status-LED wiring on the ROCK 5B+ header.*
+The current close-up photo showing a hand holding wires near the heatsink is the **fan wiring**, not the status-LED harness, so it is intentionally not used as the GPIO/status-LED wiring illustration. A dedicated status-LED GPIO photo will be added with the final enclosure photo set.
 
 LED anode/long leg goes toward GPIO through the resistor. Cathode/short leg/flat side goes to common ground.
 
