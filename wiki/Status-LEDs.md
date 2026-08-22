@@ -2,6 +2,10 @@
 
 Cometen IRL System uses four physical status LEDs on the BELABOX / ROCK 5B+ enclosure.
 
+![Prototype status LED panel](https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-prototype-led-panel.jpg)
+
+*Prototype status-LED panel on the current enclosure. Final enclosure photos will replace this image after the hardware build is complete.*
+
 ## LED meanings
 
 ### Green - ONLINE / INTERNET
@@ -51,6 +55,12 @@ Typical states:
 - off - BELABOX encoder is stopped
 
 Yellow and red are intentionally separate. If the source remains available while BELABOX is stopped, yellow can remain solid while red is off.
+
+## GPIO wiring
+
+![Prototype GPIO LED wiring](https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-prototype-gpio-wiring.jpg)
+
+*Prototype GPIO/status-LED wiring on the ROCK 5B+ header.*
 
 ## Detailed documentation
 
