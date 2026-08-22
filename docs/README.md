@@ -2,6 +2,8 @@
 
 This is the canonical documentation index for Cometen IRL System.
 
+> **Unofficial project:** Cometen IRL System is not an official BELABOX project and is not developed, maintained, endorsed or supported by BELABOX. It is an independent personal add-on/modification project created by Cometen for his own BELABOX-based IRL streaming setup.
+
 The project combines the IRL alert return channel, BELABOX-side audio, Browser Source audio, heartbeat/status, Twitch remote control, OBS admin control, automatic SRT failover/recovery, status LEDs and CometenWebAdmin integration into one coordinated system.
 
 ## Start here
