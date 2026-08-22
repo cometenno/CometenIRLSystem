@@ -83,11 +83,22 @@ Runs one headless Chromium process/profile per configured Browser Source and rou
 
 File: `receiver/status_leds.py`
 
-Drives physical system/audio/video/encoder indicators on the BELABOX enclosure.
+Drives the four physical indicators:
+
+- green - BELABOX online / internet connectivity
+- blue - configured Bluetooth audio device state, not one specific speaker model
+- yellow - current video-input availability
+- red - BELABOX encoder/output state
+
+See [[Status-LEDs]].
 
 ### Root video probe
 
-A small root system service observes the BELABOX encoder process/device file descriptors and publishes a safe status file for the normal user receiver/LED service.
+File: `receiver/video_signal_probe.py`
+
+A small root system service observes the BELABOX video/encoder state and publishes a safe status file for the normal user receiver/LED service.
+
+The probe supports both local device inputs and RTMP network input. Local device paths include `/dev/usb_capture`, `/dev/hdmirx` and `/dev/hdmi_capture`. RTMP publishers are detected separately through nginx-rtmp status / TCP port `1935`, and the active BELABOX pipeline can be identified as RTMP through `rtmpsrc`.
 
 ## Compatibility names
 
