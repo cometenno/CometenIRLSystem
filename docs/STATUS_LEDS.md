@@ -9,9 +9,9 @@ The normal alert receiver and LED controller run as a user-systemd service. A sm
 Verified wiring on the Cometen BELABOX:
 
 ```text
-PIN 32 - PIN_32 - green  - SYSTEM / ONLINE
+PIN 32 - PIN_32 - green  - ONLINE / INTERNET
 PIN 34 - GND    - common ground
-PIN 36 - PIN_36 - blue   - BLUETOOTH / WPS200
+PIN 36 - PIN_36 - blue   - BLUETOOTH AUDIO
 PIN 38 - PIN_38 - yellow - VIDEO INPUT
 PIN 40 - PIN_40 - red    - BELABOX ENCODER / OUTPUT
 ```
@@ -35,18 +35,20 @@ LED anode/long leg goes toward GPIO through the resistor. Cathode/short leg/flat
 
 ## LED meaning
 
-### Green - SYSTEM / ONLINE
+### Green - ONLINE / INTERNET
 
-- slow blink - receiver is starting or relay host has not yet been reached
-- solid - relay host is reachable
-- fast blink - network/relay was lost after the system had been online
+- slow blink - system is starting or internet/relay connectivity has not yet been established
+- solid - BELABOX is online and connected to the internet; the relay is reachable
+- fast blink - internet/relay connectivity was lost after the system had been online
 - off - box or `cometen-irl-alerts.service` receiver service is off
 
-### Blue - BLUETOOTH / WPS200
+### Blue - BLUETOOTH AUDIO
 
-- solid - configured WPS200/Soundcore device exists as a PipeWire `Audio/Sink`
-- slow blink - sink is missing but the Bluetooth/watchdog service is active
-- fast blink - sink is missing and the Bluetooth/watchdog service is also inactive
+- solid - the configured Bluetooth audio device exists as a PipeWire `Audio/Sink`
+- slow blink - the configured Bluetooth audio sink is missing but the reconnect/watchdog service is active
+- fast blink - the configured Bluetooth audio sink is missing and the reconnect/watchdog service is also inactive
+
+The blue LED represents the configured Bluetooth audio output, not a specific speaker model. The actual device/sink is selected through the local receiver configuration.
 
 ### Yellow - VIDEO INPUT
 
@@ -227,7 +229,7 @@ Relevant local `receiver/config.json` section:
 }
 ```
 
-Adjust the sink match and camera path to the actual installation. Do not commit the local config.
+`bluetooth_sink_match` is installation-specific. `WPS200` above is only an example from the current local setup; another Bluetooth audio device can be configured instead. Adjust the sink match and camera path to the actual installation. Do not commit the local config.
 
 ## Test only the LEDs
 
