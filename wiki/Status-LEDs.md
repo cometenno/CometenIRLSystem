@@ -58,9 +58,7 @@ Yellow and red are intentionally separate. If the source remains available while
 
 ## GPIO wiring
 
-![Prototype GPIO LED wiring](https://raw.githubusercontent.com/la1ona/CometenIRLSystem/main/docs/images/belabox-prototype-gpio-wiring.jpg)
-
-*Prototype GPIO/status-LED wiring on the ROCK 5B+ header.*
+The current close-up photo showing a hand holding wires near the heatsink is the **fan wiring**, not the status-LED harness, so it is intentionally not used here. A dedicated status-LED GPIO photo will be added with the final enclosure photo set.
 
 ## Detailed documentation
 
