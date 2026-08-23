@@ -1,11 +1,25 @@
-(() => {
+(function () {
   "use strict";
 
-  const WS_URL = "ws://127.0.0.1:8081/";
-  const ACTION_NAME = "Cometen IRL Notifications - Send";
-  const RECONNECT_MS = 3000;
+  function buildWebSocketUrl() {
+    var params = new URLSearchParams(window.location.search);
+    var savedHost = localStorage.getItem("cwa_ws_host");
+    var savedPort = localStorage.getItem("cwa_ws_port");
+    var host =
+      params.get("host") ||
+      savedHost ||
+      ((window.location.protocol === "http:" || window.location.protocol === "https:")
+        ? window.location.hostname
+        : "127.0.0.1");
+    var port = params.get("port") || savedPort || "8081";
+    return "ws://" + host + ":" + port + "/";
+  }
 
-  const TYPE_MAP = {
+  var WS_URL = buildWebSocketUrl();
+  var ACTION_NAME = "Cometen IRL Notifications - Send";
+  var RECONNECT_MS = 3000;
+
+  var TYPE_MAP = {
     follow: "follow",
     sub: "sub",
     resub: "resub",
@@ -26,7 +40,7 @@
     youtubesub: "youtubesub"
   };
 
-  const SETTINGS_KEY_MAP = {
+  var SETTINGS_KEY_MAP = {
     follow: "follow",
     sub: "sub",
     resub: "resub",
@@ -38,7 +52,7 @@
     youtubesub: "yt_sub"
   };
 
-  const SOUND_MAP = {
+  var SOUND_MAP = {
     follow: "follow.wav",
     sub: "sub.wav",
     resub: "resub.wav",
@@ -50,11 +64,28 @@
     youtubesub: "sub.wav"
   };
 
-  let socket = null;
-  let reconnectTimer = null;
+  var socket = null;
+  var reconnectTimer = null;
+  var pending = [];
+
+  function hasValue(obj, key) {
+    return obj &&
+      Object.prototype.hasOwnProperty.call(obj, key) &&
+      obj[key] !== undefined &&
+      obj[key] !== null &&
+      String(obj[key]).trim() !== "";
+  }
+
+  function firstValue(obj, keys, fallback) {
+    var i;
+    for (i = 0; i < keys.length; i += 1) {
+      if (hasValue(obj, keys[i])) return obj[keys[i]];
+    }
+    return fallback;
+  }
 
   function cleanType(value) {
-    const key = String(value || "")
+    var key = String(value || "")
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "_")
@@ -66,85 +97,143 @@
 
   function currentIrlSettings() {
     try {
-      if (typeof adminSettings !== "undefined" && adminSettings && typeof adminSettings === "object") {
+      if (typeof adminSettings !== "undefined" &&
+          adminSettings &&
+          typeof adminSettings === "object") {
         return adminSettings.irl || null;
       }
-    } catch (_) {}
+    } catch (error) {}
 
     return null;
   }
 
   function irlAlertIsEnabled(eventType) {
-    const settings = currentIrlSettings();
+    var settings = currentIrlSettings();
+    var typeSettings;
+    var settingsKey;
 
-    // Older saved settings did not have an IRL section. Keep the original ON behavior.
     if (!settings) return true;
     if (settings.enabled === false) return false;
 
-    const typeSettings = settings.alerts && typeof settings.alerts === "object"
-      ? settings.alerts
-      : {};
-    const settingsKey = SETTINGS_KEY_MAP[eventType] || eventType;
+    typeSettings =
+      settings.alerts && typeof settings.alerts === "object"
+        ? settings.alerts
+        : {};
 
+    settingsKey = SETTINGS_KEY_MAP[eventType] || eventType;
     return typeSettings[settingsKey] !== false;
   }
 
   function scheduleReconnect() {
     if (reconnectTimer !== null) return;
-    reconnectTimer = window.setTimeout(() => {
+
+    reconnectTimer = window.setTimeout(function () {
       reconnectTimer = null;
       connect();
     }, RECONNECT_MS);
   }
 
+  function flushPending() {
+    while (socket &&
+           socket.readyState === WebSocket.OPEN &&
+           pending.length > 0) {
+      try {
+        socket.send(JSON.stringify(pending.shift()));
+      } catch (error) {
+        break;
+      }
+    }
+  }
+
   function connect() {
-    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+    if (socket &&
+        (socket.readyState === WebSocket.OPEN ||
+         socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
     try {
       socket = new WebSocket(WS_URL);
-      socket.addEventListener("close", scheduleReconnect);
-      socket.addEventListener("error", () => {
-        try { socket.close(); } catch (_) {}
+
+      socket.addEventListener("open", function () {
+        console.log("[CometenIRL] legacy forward connected");
+        flushPending();
       });
-    } catch (_) {
+
+      socket.addEventListener("close", scheduleReconnect);
+
+      socket.addEventListener("error", function () {
+        try {
+          socket.close();
+        } catch (error) {}
+      });
+    } catch (error) {
       scheduleReconnect();
     }
   }
 
-  function forwardAlert(payload) {
-    if (!payload || typeof payload !== "object") return;
-
-    const eventType = cleanType(payload.alert || payload.alertType || payload.type);
-    if (!eventType || !irlAlertIsEnabled(eventType)) return;
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      connect();
-      return;
+  function sendRequest(request) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify(request));
+        return;
+      } catch (error) {}
     }
 
-    const amount = payload.amount ?? payload.count ?? payload.viewers ?? payload.bits ?? payload.months ?? 0;
-    const userName = payload.user ?? payload.userName ?? payload.displayName ?? "";
-    const message = payload.message ?? payload.text ?? "";
+    pending.push(request);
+    connect();
+  }
 
-    socket.send(JSON.stringify({
+  function forwardAlert(payload) {
+    var eventType;
+    var amount;
+    var userName;
+    var message;
+
+    if (!payload || typeof payload !== "object") return;
+
+    eventType = cleanType(
+      firstValue(payload, ["alert", "alertType", "type"], "")
+    );
+
+    if (!eventType || !irlAlertIsEnabled(eventType)) return;
+
+    amount = firstValue(
+      payload,
+      ["amount", "count", "viewers", "bits", "months"],
+      0
+    );
+
+    userName = firstValue(
+      payload,
+      ["user", "userName", "displayName"],
+      ""
+    );
+
+    message = firstValue(
+      payload,
+      ["message", "text"],
+      ""
+    );
+
+    sendRequest({
       request: "DoAction",
-      id: `cometen-irl-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id: "cometen-irl-" + Date.now() + "-" +
+          Math.random().toString(16).slice(2),
       action: { name: ACTION_NAME },
       args: {
-        alertType: String(payload.alert || ""),
-        eventType,
+        alertType: String(firstValue(payload, ["alert"], "")),
+        eventType: String(eventType),
         userName: String(userName || ""),
         amount: String(amount || 0),
         message: String(message || ""),
         sound: SOUND_MAP[eventType] || "test.wav"
       }
-    }));
+    });
   }
 
   function installHook() {
-    const original = window.enqueueAlert;
+    var original = window.enqueueAlert;
 
     if (typeof original !== "function") {
       window.setTimeout(installHook, 250);
@@ -165,8 +254,10 @@
 
     wrappedEnqueueAlert.__cometenIrlWrapped = true;
     window.enqueueAlert = wrappedEnqueueAlert;
+
+    console.log("[CometenIRL] legacy hook installed");
   }
 
   connect();
   installHook();
-})();
+}());
