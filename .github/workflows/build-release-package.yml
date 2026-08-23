@@ -1,0 +1,224 @@
+name: Build release package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'belabox/**'
+      - 'docs/**'
+      - 'integration/**'
+      - 'receiver/**'
+      - 'relay/**'
+      - 'scripts/**'
+      - 'streamerbot/**'
+      - 'wiki/**'
+      - 'README.md'
+      - 'LICENSE'
+      - '.github/workflows/build-release-package.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cometen-irl-system-release-package
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build Streamer.bot import and v1.0.0 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import gzip
+          import json
+          import uuid
+          import zipfile
+
+          version = '1.0.0'
+          group = 'Cometen IRL System'
+          package_root = f'CometenIRLSystem-v{version}'
+          release_dir = Path('release')
+          release_dir.mkdir(parents=True, exist_ok=True)
+
+          def stable_id(name: str) -> str:
+              return str(uuid.uuid5(uuid.NAMESPACE_URL, f'https://github.com/la1ona/CometenIRLSystem/{name}'))
+
+          action_specs = [
+              ('Cometen IRL Notifications - Send', 'streamerbot/CometenIRL_Send.cs'),
+              ('CometenIRL_RemoteControl', 'streamerbot/CometenIRL_RemoteControl.cs'),
+              ('CometenIRL_BrowserAudioControl', 'streamerbot/CometenIRL_BrowserAudioControl.cs'),
+              ('CometenIRL_AdminControl', 'streamerbot/CometenIRL_AdminControl.cs'),
+              ('CometenIRL_EndAutoStop', 'streamerbot/CometenIRL_EndAutoStop.cs'),
+              ('IRLAlertsController', 'streamerbot/IRLAlertsController.cs'),
+              ('CometenIRL_Setup', 'streamerbot/CometenIRL_Setup.cs'),
+          ]
+
+          actions = []
+          for index, (action_name, source_name) in enumerate(action_specs):
+              source_path = Path(source_name)
+              if not source_path.is_file():
+                  raise RuntimeError(f'Missing Streamer.bot source: {source_name}')
+
+              actions.append({
+                  'id': stable_id(f'action/{action_name}'),
+                  'queue': '00000000-0000-0000-0000-000000000000',
+                  'enabled': True,
+                  'excludeFromHistory': False,
+                  'excludeFromPending': False,
+                  'name': action_name,
+                  'group': group,
+                  'alwaysRun': False,
+                  'randomAction': False,
+                  'concurrent': False,
+                  'triggers': [],
+                  'subActions': [
+                      {
+                          'name': None,
+                          'description': None,
+                          'references': [],
+                          'byteCode': base64.b64encode(source_path.read_bytes()).decode('ascii'),
+                          'precompile': False,
+                          'delayStart': False,
+                          'saveResultToVariable': False,
+                          'saveToVariable': None,
+                          'id': stable_id(f'csharp/{action_name}'),
+                          'weight': 0.0,
+                          'type': 99999,
+                          'parentId': None,
+                          'enabled': True,
+                          'index': 0
+                      }
+                  ],
+                  'collapsedGroups': []
+              })
+
+          export = {
+              'meta': {
+                  'name': f'Cometen IRL System v{version}',
+                  'author': 'Cometen',
+                  'version': version,
+                  'description': (
+                      'Ready-to-import Streamer.bot C# actions for Cometen IRL System. '
+                      'After import, run CometenIRL_Setup once and configure command triggers, '
+                      'permissions, OBS connection and the dedicated Ending queue as documented.'
+                  )
+              },
+              'data': {
+                  'actions': actions,
+                  'queues': [],
+                  'commands': [],
+                  'websocketServers': [],
+                  'websocketClients': [],
+                  'timers': []
+              },
+              'version': 24,
+              'exportedFrom': '1.0.7',
+              'minimumVersion': '1.0.0-alpha.1'
+          }
+
+          json_bytes = json.dumps(export, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+          encoded = base64.b64encode(b'SBAE' + gzip.compress(json_bytes, mtime=0)).decode('ascii')
+
+          import_name = f'CometenIRLSystem_{version}.sb'
+          import_path = release_dir / import_name
+          import_path.write_text(encoded, encoding='utf-8', newline='')
+
+          # Validate generated Streamer.bot import before packaging.
+          decoded = base64.b64decode(import_path.read_text(encoding='utf-8'))
+          assert decoded[:4] == b'SBAE'
+          verified = json.loads(gzip.decompress(decoded[4:]))
+          imported_actions = verified['data']['actions']
+          assert len(imported_actions) == len(action_specs)
+          assert [a['name'] for a in imported_actions] == [a[0] for a in action_specs]
+          assert all(len(a['subActions']) == 1 for a in imported_actions)
+          assert all(a['subActions'][0]['type'] == 99999 for a in imported_actions)
+          assert verified['data']['commands'] == []
+
+          out = release_dir / f'CometenIRLSystem-v{version}.zip'
+
+          files = [
+              (import_path, import_name),
+              (Path('README.md'), 'README.md'),
+              (Path('LICENSE'), 'LICENSE'),
+          ]
+
+          included_dirs = [
+              'belabox',
+              'docs',
+              'integration',
+              'receiver',
+              'relay',
+              'scripts',
+              'streamerbot',
+              'wiki',
+          ]
+
+          excluded_paths = {
+              'relay/config.php',
+              'receiver/config.json',
+          }
+          excluded_names = {
+              '.env',
+              '.env.local',
+              '.DS_Store',
+          }
+
+          for directory in included_dirs:
+              base = Path(directory)
+              if not base.exists():
+                  continue
+              for source in sorted(base.rglob('*')):
+                  if not source.is_file():
+                      continue
+                  rel = source.as_posix()
+                  if rel in excluded_paths:
+                      continue
+                  if source.name in excluded_names:
+                      continue
+                  if '__pycache__' in source.parts:
+                      continue
+                  if source.suffix in {'.pyc', '.log'}:
+                      continue
+                  files.append((source, rel))
+
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as archive:
+              for source, name in files:
+                  archive.write(source, f'{package_root}/{name}')
+
+          # Validate package contents and secret exclusions.
+          with zipfile.ZipFile(out, 'r') as archive:
+              names = archive.namelist()
+              assert f'{package_root}/{import_name}' in names
+              assert f'{package_root}/streamerbot/CometenIRL_Setup.cs' in names
+              assert f'{package_root}/receiver/receiver.py' in names
+              assert f'{package_root}/README.md' in names
+              assert not any(name.endswith('/relay/config.php') for name in names)
+              assert not any(name.endswith('/receiver/config.json') for name in names)
+
+          print(f'Built import: {import_path} ({import_path.stat().st_size} bytes)')
+          print(f'Built package: {out} ({out.stat().st_size} bytes)')
+          print(f'Imported Streamer.bot actions: {len(action_specs)}')
+          print(f'Package files: {len(files)}')
+          PY
+
+      - name: Commit refreshed import and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add release/CometenIRLSystem_1.0.0.sb release/CometenIRLSystem-v1.0.0.zip
+          if git diff --cached --quiet; then
+            echo "Release import and package are already up to date."
+            exit 0
+          fi
+          git commit -m "Build Cometen IRL System v1.0.0 release package"
+          git push
