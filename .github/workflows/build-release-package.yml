@@ -43,7 +43,7 @@ jobs:
           import zipfile
 
           version = '1.0.0'
-          group = 'Cometen IRL System'
+          group = 'IRL BelaBox Alerts'
           package_root = f'CometenIRLSystem-v{version}'
           release_dir = Path('release')
           release_dir.mkdir(parents=True, exist_ok=True)
@@ -51,22 +51,75 @@ jobs:
           def stable_id(name: str) -> str:
               return str(uuid.uuid5(uuid.NAMESPACE_URL, f'https://github.com/la1ona/CometenIRLSystem/{name}'))
 
+          def wrapper_source(target: str, arguments=None) -> bytes:
+              arguments = arguments or []
+              lines = [
+                  'using System;',
+                  '',
+                  'public class CPHInline',
+                  '{',
+                  '    public bool Execute()',
+                  '    {'
+              ]
+              for key, value in arguments:
+                  if isinstance(value, int):
+                      rendered = str(value)
+                  elif isinstance(value, bool):
+                      rendered = 'true' if value else 'false'
+                  else:
+                      rendered = json.dumps(str(value), ensure_ascii=False)
+                  lines.append(f'        CPH.SetArgument({json.dumps(key)}, {rendered});')
+              lines.append(f'        return CPH.RunAction({json.dumps(target)}, true);')
+              lines.extend(['    }', '}', ''])
+              return '\n'.join(lines).encode('utf-8')
+
+          def file_source(path: str) -> bytes:
+              source_path = Path(path)
+              if not source_path.is_file():
+                  raise RuntimeError(f'Missing Streamer.bot source: {path}')
+              return source_path.read_bytes()
+
+          # Keep this order aligned with the production IRL BelaBox Alerts group.
           action_specs = [
-              ('Cometen IRL Notifications - Send', 'streamerbot/CometenIRL_Send.cs'),
-              ('CometenIRL_RemoteControl', 'streamerbot/CometenIRL_RemoteControl.cs'),
-              ('CometenIRL_BrowserAudioControl', 'streamerbot/CometenIRL_BrowserAudioControl.cs'),
-              ('CometenIRL_AdminControl', 'streamerbot/CometenIRL_AdminControl.cs'),
-              ('CometenIRL_EndAutoStop', 'streamerbot/CometenIRL_EndAutoStop.cs'),
-              ('IRLAlertsController', 'streamerbot/IRLAlertsController.cs'),
-              ('CometenIRL_Setup', 'streamerbot/CometenIRL_Setup.cs'),
+              ('Cometen IRL Globals', wrapper_source('CometenIRL_Setup')),
+              ('Cometen IRL Notifications - Send', file_source('streamerbot/CometenIRL_Send.cs')),
+              ('Cometen IRL Notifications - Test', wrapper_source(
+                  'Cometen IRL Notifications - Send', [('eventType', 'test')]
+              )),
+              ('CometenIRL_AdminControl', file_source('streamerbot/CometenIRL_AdminControl.cs')),
+              ('CometenIRL_BrowserAudioControl', file_source('streamerbot/CometenIRL_BrowserAudioControl.cs')),
+              ('CometenIRL_EndAutoStop', file_source('streamerbot/CometenIRL_EndAutoStop.cs')),
+              ('CometenIRL_RemoteControl', file_source('streamerbot/CometenIRL_RemoteControl.cs')),
+              ('CometenIRL_Setup', file_source('streamerbot/CometenIRL_Setup.cs')),
+              ('IRL - Alert Test', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'alert_test')]
+              )),
+              ('IRL - Status', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'status')]
+              )),
+              ('IRL - Volume 100', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 100)]
+              )),
+              ('IRL - Volume 25', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 25)]
+              )),
+              ('IRL - Volume 50', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 50)]
+              )),
+              ('IRL - Volume 75', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 75)]
+              )),
+              ('IRL - Volume mute', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'mute')]
+              )),
+              ('IRL - Volume unmute', wrapper_source(
+                  'CometenIRL_RemoteControl', [('controlAction', 'unmute')]
+              )),
+              ('IRLAlertsController', file_source('streamerbot/IRLAlertsController.cs')),
           ]
 
           actions = []
-          for index, (action_name, source_name) in enumerate(action_specs):
-              source_path = Path(source_name)
-              if not source_path.is_file():
-                  raise RuntimeError(f'Missing Streamer.bot source: {source_name}')
-
+          for action_name, source_bytes in action_specs:
               actions.append({
                   'id': stable_id(f'action/{action_name}'),
                   'queue': '00000000-0000-0000-0000-000000000000',
@@ -84,7 +137,7 @@ jobs:
                           'name': None,
                           'description': None,
                           'references': [],
-                          'byteCode': base64.b64encode(source_path.read_bytes()).decode('ascii'),
+                          'byteCode': base64.b64encode(source_bytes).decode('ascii'),
                           'precompile': False,
                           'delayStart': False,
                           'saveResultToVariable': False,
@@ -106,9 +159,9 @@ jobs:
                   'author': 'Cometen',
                   'version': version,
                   'description': (
-                      'Ready-to-import Streamer.bot C# actions for Cometen IRL System. '
-                      'After import, run CometenIRL_Setup once and configure command triggers, '
-                      'permissions, OBS connection and the dedicated Ending queue as documented.'
+                      'Ready-to-import 17-action Streamer.bot package for Cometen IRL System. '
+                      'Includes core actions plus production-compatible test, status, volume, mute '
+                      'and globals wrapper actions. Run CometenIRL_Setup once after import.'
                   )
               },
               'data': {
@@ -136,8 +189,10 @@ jobs:
           assert decoded[:4] == b'SBAE'
           verified = json.loads(gzip.decompress(decoded[4:]))
           imported_actions = verified['data']['actions']
-          assert len(imported_actions) == len(action_specs)
-          assert [a['name'] for a in imported_actions] == [a[0] for a in action_specs]
+          expected_names = [name for name, _ in action_specs]
+          assert len(imported_actions) == 17
+          assert [a['name'] for a in imported_actions] == expected_names
+          assert all(a['group'] == group for a in imported_actions)
           assert all(len(a['subActions']) == 1 for a in imported_actions)
           assert all(a['subActions'][0]['type'] == 99999 for a in imported_actions)
           assert verified['data']['commands'] == []
@@ -220,5 +275,5 @@ jobs:
             echo "Release import and package are already up to date."
             exit 0
           fi
-          git commit -m "Build Cometen IRL System v1.0.0 release package"
+          git commit -m "Build full 17-action Cometen IRL System v1.0.0 package"
           git push
