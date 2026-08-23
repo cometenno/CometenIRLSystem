@@ -80,42 +80,23 @@ jobs:
                   raise RuntimeError(f'Missing Streamer.bot source: {path}')
               return source_path.read_bytes()
 
-          # Keep this order aligned with the production IRL BelaBox Alerts group.
           action_specs = [
               ('Cometen IRL Globals', wrapper_source('CometenIRL_Setup')),
               ('Cometen IRL Notifications - Send', file_source('streamerbot/CometenIRL_Send.cs')),
-              ('Cometen IRL Notifications - Test', wrapper_source(
-                  'Cometen IRL Notifications - Send', [('eventType', 'test')]
-              )),
+              ('Cometen IRL Notifications - Test', wrapper_source('Cometen IRL Notifications - Send', [('eventType', 'test')])),
               ('CometenIRL_AdminControl', file_source('streamerbot/CometenIRL_AdminControl.cs')),
               ('CometenIRL_BrowserAudioControl', file_source('streamerbot/CometenIRL_BrowserAudioControl.cs')),
               ('CometenIRL_EndAutoStop', file_source('streamerbot/CometenIRL_EndAutoStop.cs')),
               ('CometenIRL_RemoteControl', file_source('streamerbot/CometenIRL_RemoteControl.cs')),
               ('CometenIRL_Setup', file_source('streamerbot/CometenIRL_Setup.cs')),
-              ('IRL - Alert Test', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'alert_test')]
-              )),
-              ('IRL - Status', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'status')]
-              )),
-              ('IRL - Volume 100', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 100)]
-              )),
-              ('IRL - Volume 25', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 25)]
-              )),
-              ('IRL - Volume 50', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 50)]
-              )),
-              ('IRL - Volume 75', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 75)]
-              )),
-              ('IRL - Volume mute', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'mute')]
-              )),
-              ('IRL - Volume unmute', wrapper_source(
-                  'CometenIRL_RemoteControl', [('controlAction', 'unmute')]
-              )),
+              ('IRL - Alert Test', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'alert_test')])),
+              ('IRL - Status', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'status')])),
+              ('IRL - Volume 100', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 100)])),
+              ('IRL - Volume 25', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 25)])),
+              ('IRL - Volume 50', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 50)])),
+              ('IRL - Volume 75', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'volume_set'), ('controlValue', 75)])),
+              ('IRL - Volume mute', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'mute')])),
+              ('IRL - Volume unmute', wrapper_source('CometenIRL_RemoteControl', [('controlAction', 'unmute')])),
               ('IRLAlertsController', file_source('streamerbot/IRLAlertsController.cs')),
           ]
 
@@ -133,24 +114,22 @@ jobs:
                   'randomAction': False,
                   'concurrent': False,
                   'triggers': [],
-                  'subActions': [
-                      {
-                          'name': None,
-                          'description': None,
-                          'references': [],
-                          'byteCode': base64.b64encode(source_bytes).decode('ascii'),
-                          'precompile': False,
-                          'delayStart': False,
-                          'saveResultToVariable': False,
-                          'saveToVariable': None,
-                          'id': stable_id(f'csharp/{action_name}'),
-                          'weight': 0.0,
-                          'type': 99999,
-                          'parentId': None,
-                          'enabled': True,
-                          'index': 0
-                      }
-                  ],
+                  'subActions': [{
+                      'name': None,
+                      'description': None,
+                      'references': [],
+                      'byteCode': base64.b64encode(source_bytes).decode('ascii'),
+                      'precompile': False,
+                      'delayStart': False,
+                      'saveResultToVariable': False,
+                      'saveToVariable': None,
+                      'id': stable_id(f'csharp/{action_name}'),
+                      'weight': 0.0,
+                      'type': 99999,
+                      'parentId': None,
+                      'enabled': True,
+                      'index': 0
+                  }],
                   'collapsedGroups': []
               })
 
@@ -159,11 +138,7 @@ jobs:
                   'name': f'Cometen IRL System v{release_label}',
                   'author': 'Cometen',
                   'version': version,
-                  'description': (
-                      'Ready-to-import 17-action Streamer.bot package for Cometen IRL System. '
-                      'Includes core actions plus production-compatible test, status, volume, mute '
-                      'and globals wrapper actions. Run CometenIRL_Setup once after import.'
-                  )
+                  'description': 'Ready-to-import 17-action Streamer.bot package for Cometen IRL System. Includes core actions plus production-compatible test, status, volume, mute and globals wrapper actions. Run CometenIRL_Setup once after import.'
               },
               'data': {
                   'actions': actions,
@@ -181,11 +156,10 @@ jobs:
           json_bytes = json.dumps(export, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
           encoded = base64.b64encode(b'SBAE' + gzip.compress(json_bytes, mtime=0)).decode('ascii')
 
-          import_name = f'CometenIRLSystem_{version}.sb'
+          import_name = f'CometenIRLSystem_{release_label}.sb'
           import_path = release_dir / import_name
           import_path.write_text(encoded, encoding='utf-8', newline='')
 
-          # Validate generated Streamer.bot import before packaging.
           decoded = base64.b64decode(import_path.read_text(encoding='utf-8'))
           assert decoded[:4] == b'SBAE'
           verified = json.loads(gzip.decompress(decoded[4:]))
@@ -206,26 +180,9 @@ jobs:
               (Path('LICENSE'), 'LICENSE'),
           ]
 
-          included_dirs = [
-              'belabox',
-              'docs',
-              'integration',
-              'receiver',
-              'relay',
-              'scripts',
-              'streamerbot',
-              'wiki',
-          ]
-
-          excluded_paths = {
-              'relay/config.php',
-              'receiver/config.json',
-          }
-          excluded_names = {
-              '.env',
-              '.env.local',
-              '.DS_Store',
-          }
+          included_dirs = ['belabox', 'docs', 'integration', 'receiver', 'relay', 'scripts', 'streamerbot', 'wiki']
+          excluded_paths = {'relay/config.php', 'receiver/config.json'}
+          excluded_names = {'.env', '.env.local', '.DS_Store'}
 
           for directory in included_dirs:
               base = Path(directory)
@@ -235,13 +192,7 @@ jobs:
                   if not source.is_file():
                       continue
                   rel = source.as_posix()
-                  if rel in excluded_paths:
-                      continue
-                  if source.name in excluded_names:
-                      continue
-                  if '__pycache__' in source.parts:
-                      continue
-                  if source.suffix in {'.pyc', '.log'}:
+                  if rel in excluded_paths or source.name in excluded_names or '__pycache__' in source.parts or source.suffix in {'.pyc', '.log'}:
                       continue
                   files.append((source, rel))
 
@@ -249,7 +200,6 @@ jobs:
               for source, name in files:
                   archive.write(source, f'{package_root}/{name}')
 
-          # Validate package contents and secret exclusions.
           with zipfile.ZipFile(out, 'r') as archive:
               names = archive.namelist()
               assert f'{package_root}/{import_name}' in names
@@ -271,7 +221,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add release/CometenIRLSystem_1.0.0.sb release/CometenIRLSystem-v1.0.zip
+          git add release/CometenIRLSystem_1.0.sb release/CometenIRLSystem-v1.0.zip
           if git diff --cached --quiet; then
             echo "Release import and package are already up to date."
             exit 0
