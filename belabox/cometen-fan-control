@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CometenIRLAlerts - ROCK 5B+ external Noctua PWM fan controller v2.1
+# Cometen IRL System - ROCK 5B+ external Noctua PWM fan controller v2.3
 #
 # Hardware:
 #   ROCK 5B+ GPIO pin 3 -> PWM15-M1 -> Noctua blue PWM wire
@@ -12,25 +12,54 @@ set -euo pipefail
 # Uses PWM15 device febf0030.pwm.
 # PWM frequency: 25 kHz (period 40000 ns).
 #
-# Temperature curve:
+# Temperature sources:
+#   1. ROCK 5B+ SoC temperature
+#   2. BME280 enclosure temperature from /run/cometen/bme280.json
+#
+# Highest requested fan speed always wins.
+#
+# CPU rise curve:
 #   < 42 C   -> 20 %
 #   42-49 C  -> 30 %
 #   50-56 C  -> 45 %
 #   57-64 C  -> 70 %
 #   >= 65 C  -> 100 %
 #
-# The script detects the correct pwmchip dynamically, so it does not depend
-# on Linux assigning PWM15 to pwmchip1 every boot.
+# CPU fall thresholds (hysteresis):
+#   45 -> 30 only at <= 48 C
+#   30 -> 20 only at <= 40 C
+#   70 -> 45 only at <= 55 C
+#   100 -> 70 only at <= 62 C
 #
-# v2.1 fixes startup on a freshly exported PWM channel where Linux exposes
-# period=0. Writing duty_cycle while period is zero is rejected with EINVAL,
-# so the controller now establishes a valid period before touching duty_cycle.
+# Enclosure/BME280 rise curve:
+#   < 32 C   -> 20 %
+#   32-35 C  -> 30 %
+#   36-39 C  -> 45 %
+#   40-43 C  -> 70 %
+#   >= 44 C  -> 100 %
+#
+# Enclosure fall thresholds:
+#   30 -> 20 at <= 30 C
+#   45 -> 30 at <= 34 C
+#   70 -> 45 at <= 38 C
+#   100 -> 70 at <= 42 C
+#
+# Fan speed increases immediately. A requested decrease must remain valid for
+# 30 seconds before PWM is lowered. Combined with hysteresis this prevents the
+# fan from bouncing between 30/45 % when the SoC sits around 49-50 C.
+#
+# If BME280 data disappears or becomes stale, CPU control continues normally.
+# If this controller exits, fan fails safe to 100 %.
 
 TEMP_FILE="/sys/class/thermal/thermal_zone0/temp"
+BME_JSON="/run/cometen/bme280.json"
+BME_MAX_AGE=15
+
 PWM_DEVICE_MATCH="febf0030.pwm"
 PWM_CHANNEL=0
 PWM_PERIOD_NS=40000
 POLL_SECONDS=2
+DOWN_DELAY_SECONDS=30
 
 find_pwmchip() {
     local chip
@@ -62,23 +91,15 @@ prepare_pwm_disabled() {
     current_period="$(read_pwm_int "$PWM_PATH/period")"
     current_duty="$(read_pwm_int "$PWM_PATH/duty_cycle")"
 
-    # A fresh sysfs PWM export can report period=0. The kernel rejects any
-    # duty_cycle write in that state, even duty_cycle=0. Set period first.
     if (( current_period <= 0 )); then
         echo "$PWM_PERIOD_NS" > "$PWM_PATH/period"
-        current_period="$PWM_PERIOD_NS"
-        current_duty=0
     elif (( current_period != PWM_PERIOD_NS )); then
-        # duty_cycle must never be greater than the new period.
         if (( current_duty > PWM_PERIOD_NS )); then
             echo 0 > "$PWM_PATH/duty_cycle"
-            current_duty=0
         fi
         echo "$PWM_PERIOD_NS" > "$PWM_PATH/period"
-        current_period="$PWM_PERIOD_NS"
     fi
 
-    # period is valid now, so duty_cycle writes are safe.
     echo 0 > "$PWM_PATH/duty_cycle"
 
     if [[ -w "$PWM_PATH/polarity" ]]; then
@@ -93,17 +114,13 @@ set_duty_percent() {
 }
 
 failsafe_full_speed() {
-    local current_period current_duty
-
     [[ -n "${PWM_PATH:-}" && -d "${PWM_PATH:-}" ]] || return 0
 
-    # Never let a cleanup error mask the original service exit.
     set +e
 
-    if [[ "$(read_pwm_int "$PWM_PATH/enable")" != "0" ]]; then
-        echo 0 > "$PWM_PATH/enable" 2>/dev/null
-    fi
+    echo 0 > "$PWM_PATH/enable" 2>/dev/null
 
+    local current_period current_duty
     current_period="$(read_pwm_int "$PWM_PATH/period")"
     current_duty="$(read_pwm_int "$PWM_PATH/duty_cycle")"
 
@@ -118,6 +135,104 @@ failsafe_full_speed() {
 
     echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle" 2>/dev/null
     echo 1 > "$PWM_PATH/enable" 2>/dev/null
+}
+
+cpu_rise_percent() {
+    local t="$1"
+    if (( t >= 65 )); then
+        echo 100
+    elif (( t >= 57 )); then
+        echo 70
+    elif (( t >= 50 )); then
+        echo 45
+    elif (( t >= 42 )); then
+        echo 30
+    else
+        echo 20
+    fi
+}
+
+cpu_fall_percent() {
+    local t="$1"
+    if (( t >= 63 )); then
+        echo 100
+    elif (( t >= 56 )); then
+        echo 70
+    elif (( t >= 49 )); then
+        echo 45
+    elif (( t >= 41 )); then
+        echo 30
+    else
+        echo 20
+    fi
+}
+
+case_rise_percent() {
+    local t="$1"
+    if (( t >= 44 )); then
+        echo 100
+    elif (( t >= 40 )); then
+        echo 70
+    elif (( t >= 36 )); then
+        echo 45
+    elif (( t >= 32 )); then
+        echo 30
+    else
+        echo 20
+    fi
+}
+
+case_fall_percent() {
+    local t="$1"
+    if (( t >= 43 )); then
+        echo 100
+    elif (( t >= 39 )); then
+        echo 70
+    elif (( t >= 35 )); then
+        echo 45
+    elif (( t >= 31 )); then
+        echo 30
+    else
+        echo 20
+    fi
+}
+
+hysteresis_percent() {
+    local current="$1"
+    local rise="$2"
+    local fall="$3"
+
+    if (( current < 0 )); then
+        echo "$rise"
+    elif (( rise > current )); then
+        echo "$rise"
+    elif (( fall < current )); then
+        echo "$fall"
+    else
+        echo "$current"
+    fi
+}
+
+read_case_temp() {
+    [[ -r "$BME_JSON" ]] || return 1
+
+    local now mtime age
+    now="$(date +%s)"
+    mtime="$(stat -c %Y "$BME_JSON" 2>/dev/null)" || return 1
+    age=$(( now - mtime ))
+    (( age <= BME_MAX_AGE )) || return 1
+
+    python3 - "$BME_JSON" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    print(round(float(data["temperature_c"])))
+except Exception:
+    sys.exit(1)
+PY
 }
 
 [[ -r "$TEMP_FILE" ]] || {
@@ -145,7 +260,6 @@ fi
     exit 1
 }
 
-# If the service exits or is stopped, leave the fan at full speed.
 trap failsafe_full_speed EXIT INT TERM
 
 prepare_pwm_disabled
@@ -155,30 +269,75 @@ echo "$PWM_PERIOD_NS" > "$PWM_PATH/duty_cycle"
 echo 1 > "$PWM_PATH/enable"
 
 logger -t cometen-fan \
-    "PWM fan controller v2.1 started: chip=$(basename "$PWM_CHIP") device=$PWM_DEVICE_MATCH period=${PWM_PERIOD_NS}ns"
+    "PWM fan controller v2.3 started: CPU+BME280 dual control with hysteresis"
 
 last_percent=-1
+cpu_state=-1
+case_state=-1
+down_since=0
+last_status=""
 
 while true; do
     raw_temp="$(cat "$TEMP_FILE")"
-    temp_c=$(( raw_temp / 1000 ))
+    cpu_temp=$(( raw_temp / 1000 ))
 
-    if (( temp_c >= 65 )); then
-        percent=100
-    elif (( temp_c >= 57 )); then
-        percent=70
-    elif (( temp_c >= 50 )); then
-        percent=45
-    elif (( temp_c >= 42 )); then
-        percent=30
+    cpu_rise="$(cpu_rise_percent "$cpu_temp")"
+    cpu_fall="$(cpu_fall_percent "$cpu_temp")"
+    cpu_state="$(hysteresis_percent "$cpu_state" "$cpu_rise" "$cpu_fall")"
+
+    case_temp=""
+    case_pwm=0
+    case_temp="$(read_case_temp 2>/dev/null || true)"
+
+    if [[ "$case_temp" =~ ^-?[0-9]+$ ]]; then
+        case_rise="$(case_rise_percent "$case_temp")"
+        case_fall="$(case_fall_percent "$case_temp")"
+        case_state="$(hysteresis_percent "$case_state" "$case_rise" "$case_fall")"
+        case_pwm="$case_state"
     else
-        percent=20
+        # BME280 is supplemental. On stale/missing data, fall back to CPU only.
+        case_state=-1
+        case_pwm=0
     fi
 
-    if (( percent != last_percent )); then
-        set_duty_percent "$percent"
-        logger -t cometen-fan "temp=${temp_c}C pwm=${percent}%"
-        last_percent="$percent"
+    target_pwm="$cpu_state"
+    if (( case_pwm > target_pwm )); then
+        target_pwm="$case_pwm"
+    fi
+
+    now="$(date +%s)"
+
+    if (( last_percent < 0 )); then
+        set_duty_percent "$target_pwm"
+        last_percent="$target_pwm"
+        down_since=0
+    elif (( target_pwm > last_percent )); then
+        # Temperature rises are acted on immediately.
+        set_duty_percent "$target_pwm"
+        last_percent="$target_pwm"
+        down_since=0
+    elif (( target_pwm < last_percent )); then
+        # Lower speed only if the lower requirement remains valid long enough.
+        if (( down_since == 0 )); then
+            down_since="$now"
+        elif (( now - down_since >= DOWN_DELAY_SECONDS )); then
+            set_duty_percent "$target_pwm"
+            last_percent="$target_pwm"
+            down_since=0
+        fi
+    else
+        down_since=0
+    fi
+
+    if [[ "$case_temp" =~ ^-?[0-9]+$ ]]; then
+        status="cpu=${cpu_temp}C cpu_req=${cpu_state}% case=${case_temp}C case_req=${case_pwm}% pwm=${last_percent}%"
+    else
+        status="cpu=${cpu_temp}C cpu_req=${cpu_state}% case=unavailable pwm=${last_percent}%"
+    fi
+
+    if [[ "$status" != "$last_status" ]]; then
+        logger -t cometen-fan "$status"
+        last_status="$status"
     fi
 
     sleep "$POLL_SECONDS"
