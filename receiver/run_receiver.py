@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -14,6 +15,8 @@ from status_leds import StatusLedController
 
 LOG = logging.getLogger("cometen-irl-alerts")
 VIDEO_STATUS_PATH = Path("/run/cometen-irl-video-status.json")
+BME280_STATUS_PATH = Path("/run/cometen/bme280.json")
+PWM_DEVICE_MATCH = "febf0030.pwm"
 
 
 class ProbedStatusLedController(StatusLedController):
@@ -95,19 +98,42 @@ def read_temperature() -> str:
         raw = float(Path("/sys/class/thermal/thermal_zone0/temp").read_text(encoding="utf-8").strip())
         if raw > 1000:
             raw /= 1000.0
-        return f"{int(round(raw))}C"
+        return f"CPU{int(round(raw))}C"
     except Exception:
-        return "Temp?"
+        return "CPU?"
+
+
+def read_case_temperature() -> str:
+    try:
+        if time.time() - BME280_STATUS_PATH.stat().st_mtime > 20:
+            return "Case?"
+        payload = json.loads(BME280_STATUS_PATH.read_text(encoding="utf-8"))
+        value = float(payload["temperature_c"])
+        return f"Case{int(round(value))}C"
+    except Exception:
+        return "Case?"
 
 
 def read_fan_state() -> str:
-    base = Path("/sys/class/thermal/cooling_device0")
     try:
-        state = int((base / "cur_state").read_text(encoding="utf-8").strip())
-        maximum = int((base / "max_state").read_text(encoding="utf-8").strip())
-        return f"Fan{state}/{maximum}"
+        for chip in Path("/sys/class/pwm").glob("pwmchip*"):
+            try:
+                device = os.path.realpath(chip / "device")
+            except Exception:
+                continue
+            if PWM_DEVICE_MATCH not in device:
+                continue
+
+            pwm = chip / "pwm0"
+            period = int((pwm / "period").read_text(encoding="utf-8").strip())
+            duty = int((pwm / "duty_cycle").read_text(encoding="utf-8").strip())
+            if period <= 0:
+                return "Fan?"
+            percent = int(round(duty * 100.0 / period))
+            return f"Fan{percent}%"
     except Exception:
-        return "Fan?"
+        pass
+    return "Fan?"
 
 
 def build_expanded_status(config: dict[str, Any]) -> str:
@@ -125,15 +151,16 @@ def build_expanded_status(config: dict[str, Any]) -> str:
     uptime = receiver.format_uptime()
 
     status_probe = ProbedStatusLedController(config)
-    try:
-        encoder = status_probe._live_process_active()
-    except Exception:
-        encoder = False
 
+    # Use the combined root video probe directly. The previous status code
+    # called _camera_active(), which is not part of StatusLedController and
+    # therefore always fell into the exception path. That made a healthy live
+    # encoder appear as VIDEO LOST / ENC ERR in !irlstatus.
     try:
-        video = status_probe._camera_active(encoder)
+        video, encoder, _ = status_probe._video_state()
     except Exception:
         video = None
+        encoder = False
 
     if video is True:
         video_text = "VIDEO OK"
@@ -152,8 +179,8 @@ def build_expanded_status(config: dict[str, Any]) -> str:
         live_text = "ENC OFF"
 
     return (
-        f"IRL: SYS OK | {read_temperature()} {read_fan_state()} | {audio} | "
-        f"{video_text} | {live_text} | WiFi {wifi} | Up {uptime}"
+        f"IRL: SYS OK | {read_temperature()} {read_case_temperature()} {read_fan_state()} | "
+        f"{audio} | {video_text} | {live_text} | WiFi {wifi} | Up {uptime}"
     )[:220]
 
 
