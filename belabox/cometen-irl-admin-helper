@@ -106,7 +106,23 @@ collect_devices() {
     printf '%s%s\n' "$prefix" "$result"
 }
 
+strip_env_quotes() {
+    local value="$1"
+    if [[ ${#value} -ge 2 ]]; then
+        if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+            value="${value:1:${#value}-2}"
+            value="${value//\\\"/\"}"
+            value="${value//\\\\/\\}"
+        elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+    fi
+    printf '%s' "$value"
+}
+
 load_local_defaults() {
+    local line key value
+
     WPS200_MAC=""
     WPS200_NAME="WPS200"
     COMETEN_AUDIO_USER="user"
@@ -114,11 +130,32 @@ load_local_defaults() {
     WPS200_CONNECT_TIMEOUT="8"
     WPS200_POWER_CYCLE_AFTER="3"
     WPS200_BLUEZ_RESTART_AFTER="6"
-    if [[ -f "$ENV_FILE" ]]; then
-        # This file is root-owned local configuration created by our installer.
-        # shellcheck disable=SC1090
-        source "$ENV_FILE"
-    fi
+
+    [[ -f "$ENV_FILE" ]] || return 0
+
+    # Do NOT source EnvironmentFile as shell code. Systemd accepts values with
+    # spaces (for example WPS200_NAME=soundcore Select 4 Go), while bash would
+    # try to execute "Select" as a command. Parse only the allow-listed keys.
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" == *=* ]] || continue
+
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key//[[:space:]]/}"
+        value="$(strip_env_quotes "$value")"
+
+        case "$key" in
+            WPS200_MAC) WPS200_MAC="$value" ;;
+            WPS200_NAME) WPS200_NAME="$value" ;;
+            COMETEN_AUDIO_USER) COMETEN_AUDIO_USER="$value" ;;
+            WPS200_CHECK_SECONDS) WPS200_CHECK_SECONDS="$value" ;;
+            WPS200_CONNECT_TIMEOUT) WPS200_CONNECT_TIMEOUT="$value" ;;
+            WPS200_POWER_CYCLE_AFTER) WPS200_POWER_CYCLE_AFTER="$value" ;;
+            WPS200_BLUEZ_RESTART_AFTER) WPS200_BLUEZ_RESTART_AFTER="$value" ;;
+        esac
+    done < "$ENV_FILE"
 }
 
 write_default_device() {
