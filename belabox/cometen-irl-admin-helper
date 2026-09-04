@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Privileged helper for Cometen IRL Web Admin.
+# This is intentionally a small allow-listed command surface. The unprivileged
+# receiver may call this helper through sudo, but it cannot execute arbitrary
+# shell commands as root.
+
+ENV_FILE="/etc/default/cometen-wps200"
+WATCHDOG_SERVICE="cometen-wps200.service"
+MAC_RE='^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+
+[[ "$EUID" -eq 0 ]] || {
+    echo "helper must run as root" >&2
+    exit 1
+}
+
+command -v bluetoothctl >/dev/null 2>&1 || {
+    echo "bluetoothctl not found" >&2
+    exit 1
+}
+
+sanitize_name() {
+    local value="$1"
+    value="${value//$'\n'/ }"
+    value="${value//$'\r'/ }"
+    value="${value//|/_}"
+    value="${value//;/_}"
+    value="${value//\~/_}"
+    printf '%s' "${value:0:48}"
+}
+
+validate_mac() {
+    local mac="${1:-}"
+    [[ "$mac" =~ $MAC_RE ]] || {
+        echo "invalid Bluetooth MAC" >&2
+        exit 2
+    }
+    printf '%s' "${mac^^}"
+}
+
+bt_info() {
+    /usr/bin/bluetoothctl info "$1" 2>/dev/null || true
+}
+
+device_name() {
+    local info name
+    info="$(bt_info "$1")"
+    name="$(sed -n -E 's/^[[:space:]]*(Alias|Name):[[:space:]]*(.*)$/\2/p' <<<"$info" | head -1)"
+    [[ -n "$name" ]] || name="$1"
+    sanitize_name "$name"
+}
+
+flag_from_info() {
+    local key="$1" info="$2"
+    if grep -Eq "^[[:space:]]*${key}:[[:space:]]*yes" <<<"$info"; then
+        printf '1'
+    else
+        printf '0'
+    fi
+}
+
+is_connected() {
+    bt_info "$1" | grep -q 'Connected: yes'
+}
+
+is_paired() {
+    bt_info "$1" | grep -q 'Paired: yes'
+}
+
+collect_devices() {
+    local mode="${1:-paired}" line mac info name paired connected record result prefix
+    local -A seen=()
+    result=""
+    prefix="BTLIST|"
+
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Device[[:space:]]+(([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})[[:space:]] ]] || continue
+        mac="${BASH_REMATCH[1]^^}"
+        [[ -z "${seen[$mac]:-}" ]] || continue
+        seen[$mac]=1
+
+        info="$(bt_info "$mac")"
+        [[ -n "$info" ]] || continue
+        paired="$(flag_from_info Paired "$info")"
+        connected="$(flag_from_info Connected "$info")"
+        if [[ "$mode" == "paired" && "$paired" != "1" ]]; then
+            continue
+        fi
+        name="$(device_name "$mac")"
+        record="${mac}~${name}~${paired}~${connected}"
+
+        if (( ${#prefix} + ${#result} + ${#record} + 1 > 218 )); then
+            break
+        fi
+        [[ -z "$result" ]] || result+=";"
+        result+="$record"
+    done < <(
+        {
+            /usr/bin/bluetoothctl paired-devices 2>/dev/null || true
+            /usr/bin/bluetoothctl devices Paired 2>/dev/null || true
+            /usr/bin/bluetoothctl devices 2>/dev/null || true
+        } | awk 'NF >= 3 && $1 == "Device" {print}'
+    )
+
+    printf '%s%s\n' "$prefix" "$result"
+}
+
+load_local_defaults() {
+    WPS200_MAC=""
+    WPS200_NAME="WPS200"
+    COMETEN_AUDIO_USER="user"
+    WPS200_CHECK_SECONDS="5"
+    WPS200_CONNECT_TIMEOUT="8"
+    WPS200_POWER_CYCLE_AFTER="3"
+    WPS200_BLUEZ_RESTART_AFTER="6"
+    if [[ -f "$ENV_FILE" ]]; then
+        # This file is root-owned local configuration created by our installer.
+        # shellcheck disable=SC1090
+        source "$ENV_FILE"
+    fi
+}
+
+write_default_device() {
+    local mac="$1" name="$2" tmp escaped
+    load_local_defaults
+    escaped="${name//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    tmp="$(mktemp)"
+    cat >"$tmp" <<EOF
+# Local BELABOX Bluetooth settings - managed by Cometen IRL Web Admin
+WPS200_MAC=${mac}
+WPS200_NAME="${escaped}"
+COMETEN_AUDIO_USER=${COMETEN_AUDIO_USER}
+WPS200_CHECK_SECONDS=${WPS200_CHECK_SECONDS}
+WPS200_CONNECT_TIMEOUT=${WPS200_CONNECT_TIMEOUT}
+WPS200_POWER_CYCLE_AFTER=${WPS200_POWER_CYCLE_AFTER}
+WPS200_BLUEZ_RESTART_AFTER=${WPS200_BLUEZ_RESTART_AFTER}
+EOF
+    install -m 0644 "$tmp" "$ENV_FILE"
+    rm -f "$tmp"
+}
+
+clear_default_if_matches() {
+    local mac="$1"
+    load_local_defaults
+    if [[ "${WPS200_MAC^^}" == "$mac" ]]; then
+        systemctl stop "$WATCHDOG_SERVICE" >/dev/null 2>&1 || true
+        write_default_device "" "WPS200"
+    fi
+}
+
+ACTION="${1:-}"
+ARG="${2:-}"
+
+case "$ACTION" in
+    status)
+        load_local_defaults
+        mac="${WPS200_MAC^^}"
+        if [[ -n "$mac" && "$mac" =~ $MAC_RE ]]; then
+            name="$(device_name "$mac")"
+            connected=0
+            is_connected "$mac" && connected=1
+            printf 'BTSTATUS|%s~%s~%s\n' "$mac" "$name" "$connected"
+        else
+            printf 'BTSTATUS|~~0\n'
+        fi
+        ;;
+
+    list)
+        collect_devices paired
+        ;;
+
+    scan)
+        /usr/bin/bluetoothctl power on >/dev/null 2>&1 || true
+        /usr/bin/timeout 8 /usr/bin/bluetoothctl scan on >/dev/null 2>&1 || true
+        collect_devices all
+        ;;
+
+    pair)
+        mac="$(validate_mac "$ARG")"
+        /usr/bin/bluetoothctl power on >/dev/null 2>&1 || true
+        {
+            printf 'agent on\n'
+            printf 'default-agent\n'
+            printf 'pair %s\n' "$mac"
+            printf 'trust %s\n' "$mac"
+            printf 'quit\n'
+        } | /usr/bin/timeout 25 /usr/bin/bluetoothctl >/dev/null 2>&1 || true
+        is_paired "$mac" || {
+            echo "pairing failed for $mac" >&2
+            exit 3
+        }
+        name="$(device_name "$mac")"
+        printf 'BTPAIRED|%s|%s\n' "$mac" "$name"
+        ;;
+
+    connect)
+        mac="$(validate_mac "$ARG")"
+        /usr/bin/bluetoothctl power on >/dev/null 2>&1 || true
+        /usr/bin/bluetoothctl trust "$mac" >/dev/null 2>&1 || true
+        /usr/bin/timeout 12 /usr/bin/bluetoothctl connect "$mac" >/dev/null 2>&1 || true
+        sleep 1
+        is_connected "$mac" || {
+            echo "connect failed for $mac" >&2
+            exit 4
+        }
+        printf 'BTCONNECTED|%s|%s\n' "$mac" "$(device_name "$mac")"
+        ;;
+
+    disconnect)
+        mac="$(validate_mac "$ARG")"
+        /usr/bin/timeout 10 /usr/bin/bluetoothctl disconnect "$mac" >/dev/null 2>&1 || true
+        if is_connected "$mac"; then
+            echo "disconnect failed for $mac" >&2
+            exit 5
+        fi
+        printf 'BTDISCONNECTED|%s|%s\n' "$mac" "$(device_name "$mac")"
+        ;;
+
+    remove)
+        mac="$(validate_mac "$ARG")"
+        name="$(device_name "$mac")"
+        clear_default_if_matches "$mac"
+        /usr/bin/timeout 10 /usr/bin/bluetoothctl remove "$mac" >/dev/null 2>&1 || true
+        if bt_info "$mac" | grep -q '^Device '; then
+            echo "remove failed for $mac" >&2
+            exit 6
+        fi
+        printf 'BTREMOVED|%s|%s\n' "$mac" "$name"
+        ;;
+
+    default)
+        mac="$(validate_mac "$ARG")"
+        is_paired "$mac" || {
+            echo "device must be paired before it can be default" >&2
+            exit 7
+        }
+        name="$(device_name "$mac")"
+        write_default_device "$mac" "$name"
+        systemctl enable "$WATCHDOG_SERVICE" >/dev/null 2>&1 || true
+        systemctl restart "$WATCHDOG_SERVICE"
+        printf 'BTDEFAULT|%s|%s\n' "$mac" "$name"
+        ;;
+
+    *)
+        echo "unsupported action" >&2
+        exit 2
+        ;;
+esac
