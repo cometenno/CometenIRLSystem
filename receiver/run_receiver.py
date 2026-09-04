@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import admin_control
 import receiver
 from status_leds import StatusLedController
 
@@ -152,10 +153,6 @@ def build_expanded_status(config: dict[str, Any]) -> str:
 
     status_probe = ProbedStatusLedController(config)
 
-    # Use the combined root video probe directly. The previous status code
-    # called _camera_active(), which is not part of StatusLedController and
-    # therefore always fell into the exception path. That made a healthy live
-    # encoder appear as VIDEO LOST / ENC ERR in !irlstatus.
     try:
         video, encoder, _ = status_probe._video_state()
     except Exception:
@@ -193,11 +190,19 @@ def install_expanded_status() -> None:
         config_dir: Path,
         config_path: Path,
     ) -> str:
-        action = str(event.get("message", "")).strip().lower()
+        action_text = str(event.get("message", "")).strip()
+        action = action_text.split(" ", 1)[0].strip().lower()
+
         if action == "status":
             message = build_expanded_status(config)
             LOG.info("Remote control: expanded status requested: %s", message)
             return message
+
+        if admin_control.handles(action_text):
+            message = admin_control.handle(config, event, config_path)
+            LOG.info("Remote control: BELABOX admin action %s: %s", action, message)
+            return message
+
         return original_handle_control(config, event, config_dir, config_path)
 
     receiver.handle_control = handle_control
