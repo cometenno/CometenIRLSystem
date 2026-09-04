@@ -13,6 +13,15 @@ return [
     'sender_token' => 'CHANGE_ME_TO_A_LONG_RANDOM_SENDER_TOKEN',
     'receiver_token' => 'CHANGE_ME_TO_A_LONG_RANDOM_RECEIVER_TOKEN',
 
+    // Web admin is disabled until password_hash contains a real
+    // password_hash(..., PASSWORD_DEFAULT) value.
+    'admin' => [
+        'username' => 'cometen',
+        'password_hash' => '',
+        // Bluetooth pair/scan may need longer than normal chat control commands.
+        'control_ttl_seconds' => 45,
+    ],
+
     // Events older than this are never delivered.
     'event_ttl_seconds' => 90,
 
