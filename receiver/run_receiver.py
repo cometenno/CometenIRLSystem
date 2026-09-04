@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from status_leds import StatusLedController
 LOG = logging.getLogger("cometen-irl-alerts")
 VIDEO_STATUS_PATH = Path("/run/cometen-irl-video-status.json")
 BME280_STATUS_PATH = Path("/run/cometen/bme280.json")
+BT_DEFAULT_PATH = Path("/etc/default/cometen-wps200")
 PWM_DEVICE_MATCH = "febf0030.pwm"
 
 
@@ -65,6 +67,31 @@ class ProbedStatusLedController(StatusLedController):
         if probed is not None:
             return probed[1]
         return super()._live_process_active()
+
+    def _bluetooth_connected(self) -> bool:
+        # The web admin can change the default Bluetooth device while this
+        # receiver keeps running. Read the watchdog's local MAC every probe so
+        # the blue LED follows the new default immediately without a restart.
+        try:
+            for line in BT_DEFAULT_PATH.read_text(encoding="utf-8").splitlines():
+                if not line.startswith("WPS200_MAC="):
+                    continue
+                mac = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if not mac:
+                    break
+                completed = subprocess.run(
+                    ["bluetoothctl", "info", mac],
+                    check=False,
+                    timeout=4,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                return "Connected: yes" in completed.stdout
+        except Exception:
+            pass
+        return super()._bluetooth_connected()
 
     def _log_video_transition(
         self,
