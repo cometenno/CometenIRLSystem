@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$WikiUrl = "https://github.com/la1ona/CometenIRLSystem.wiki.git"
+$WikiUrl = "https://github.com/cometenno/CometenIRLSystem.wiki.git"
 $WikiSource = Join-Path $RepoRoot "wiki"
 $TempWiki = Join-Path $env:TEMP "CometenIRLSystem.wiki.publish"
 
