@@ -23,7 +23,7 @@ It combines:
 Repository:
 
 ```text
-https://github.com/la1ona/CometenIRLSystem
+https://github.com/cometenno/CometenIRLSystem
 ```
 
 ## Architecture
@@ -194,7 +194,7 @@ A new clone uses the new repository/directory name:
 
 ```bash
 cd ~
-git clone https://github.com/la1ona/CometenIRLSystem.git
+git clone https://github.com/cometenno/CometenIRLSystem.git
 cd CometenIRLSystem
 ```
 
@@ -206,7 +206,7 @@ Existing BELABOX installations may still be located at:
 ~/CometenIRLAlerts
 ```
 
-That local directory name does not need to be changed immediately. GitHub redirects the renamed repository, and keeping the existing directory avoids breaking installed systemd service paths.
+That local directory name does not need to be changed immediately. Keeping the existing directory avoids breaking installed systemd service paths.
 
 For an existing installation, continue using its current local directory until a deliberate local-path migration is performed.
 
