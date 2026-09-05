@@ -25,7 +25,7 @@ public class CPHInline
 
         // Relay / remote-control configuration
         CPH.LogInfo("CometenIRL Setup: configuring relay/remote globals.");
-        SeedString("CometenIRL_RelayUrl", "https://la1ona.com/CometenIRLAlerts_Relay");
+        SeedString("CometenIRL_RelayUrl", "https://cometen.no/CometenIRLAlerts_Relay");
         SeedString("CometenIRL_SenderToken", "");
         SeedString("CometenIRL_BelaboxStreamId", "");
 
